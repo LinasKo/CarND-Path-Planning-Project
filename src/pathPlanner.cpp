@@ -1,11 +1,13 @@
 #include "pathPlanner.h"
 
+#include <iostream>
 #include <utility>
+#include <vector>
 
 using namespace path_planning;
 
-
-std::pair<CoordinateXY, CoordinateXY> PathPlanner::planPath(CoordinateXY carXY, CoordinateFrenet carFrenet, double carYaw, double carSpeed)
+std::pair<std::vector<double>, std::vector<double>> PathPlanner::planPath(SimulatorResponseData simulatorData)
 {
-    return {};
+    // TODO: actually plan the path
+    return std::make_pair(std::vector<double>(), std::vector<double>());
 }

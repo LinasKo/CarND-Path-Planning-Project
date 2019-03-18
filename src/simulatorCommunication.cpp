@@ -1,5 +1,6 @@
 #include "simulatorCommunication.h"
 
+#include <cassert>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -7,14 +8,18 @@
 #include <tuple>
 #include <vector>
 
-#include "commonDatatypes.h"
-
-#include "json.hpp"
 #include <uWS/uWS.h>
 
+#include "commonDatatypes.h"
+#include "json/json.hpp"
+
 using namespace path_planning;
-using std::string;
-using std::vector;
+
+
+static constexpr char WEBSOCKET_FLAG_MESSAGE = '4';
+static constexpr char WEBSOCKET_FLAG_EVENT = '2';
+
+static const std::string SIM_MESSAGE_MANUAL_DRIVING = "42[\"manual\",{}]";
 
 
 SimulatorCommunication::SimulatorCommunication(int websocket_port) :
@@ -30,12 +35,12 @@ SimulatorCommunication::SimulatorCommunication(int websocket_port) :
     });
 }
 
-void SimulatorCommunication::readWaypoints(string mapFile, vector<double>& mapWaypointsX, vector<double>& mapWaypointsY, vector<double>& mapWaypointsS,
-    vector<double>& mapWaypointsDx, vector<double>& mapWaypointsDy)
+void SimulatorCommunication::readWaypoints(std::string mapFile, std::vector<double>& mapWaypointsX, std::vector<double>& mapWaypointsY,
+    std::vector<double>& mapWaypointsS, std::vector<double>& mapWaypointsDx, std::vector<double>& mapWaypointsDy)
 {
     std::ifstream inStreamMap(mapFile.c_str(), std::ifstream::in);
 
-    string line;
+    std::string line;
     while (getline(inStreamMap, line))
     {
         std::istringstream iss(line);
@@ -57,71 +62,41 @@ void SimulatorCommunication::readWaypoints(string mapFile, vector<double>& mapWa
     }
 }
 
-void SimulatorCommunication::addDataHandler(std::function<std::pair<CoordinateXY, CoordinateXY>(CoordinateXY, CoordinateFrenet, double, double)> handler)
+void SimulatorCommunication::addDataHandler(std::function<std::pair<std::vector<double>, std::vector<double>>(const SimulatorResponseData&)> handler)
 {
-    m_hub.onMessage([&](uWS::WebSocket<uWS::SERVER> webSocket, char *data, size_t length, uWS::OpCode opCode)
+    m_hub.onMessage([handler](uWS::WebSocket<uWS::SERVER> webSocket, char *data, size_t length, uWS::OpCode opCode)
     {
-        // "42" at the start of the message means there's a websocket message event.
-        // The 4 signifies a websocket message
-        // The 2 signifies a websocket event
-        if (length && length > 2 && data[0] == '4' && data[1] == '2')
+        /* "42" at the start of the message means there's a websocket message event.
+         * The 4 signifies a websocket message
+         * The 2 signifies a websocket event */
+        if (length && length > 2 && data[0] == WEBSOCKET_FLAG_MESSAGE && data[1] == WEBSOCKET_FLAG_EVENT)
         {
-            string jsonStr = getData(data);
+            std::string jsonStr = getData(data);
 
             if (jsonStr == "")
             {
                 // Manual driving
-                std::string msg = "42[\"manual\",{}]";
-                webSocket.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
+                webSocket.send(SIM_MESSAGE_MANUAL_DRIVING.data(), SIM_MESSAGE_MANUAL_DRIVING.length(), uWS::OpCode::TEXT);
+                return;
             }
-            else
-            {
-                auto j = nlohmann::json::parse(jsonStr);
 
-                string event = j[0].get<string>();
+            SimulatorResponseData simulatorResponse = parseData(jsonStr);
 
-                if (event == "telemetry")
-                {
-                    // j[1] is the data JSON object
+            /**
+             * TODO: define a path made up of (x,y) points that the car will visit
+             *   sequentially every .02 seconds
+             */
 
-                    // Main car's localization Data
-                    double carX = j[1]["x"];
-                    double carY = j[1]["y"];
-                    double carS = j[1]["s"];
-                    double carD = j[1]["d"];
-                    double carYaw = j[1]["yaw"];
-                    double carSpeed = j[1]["speed"];
+            std::vector<double> nextXVals;
+            std::vector<double> nextYVals;
+            std::tie(nextXVals, nextYVals) = handler(simulatorResponse);
 
-                    // Previous path data given to the Planner
-                    auto prevPathX = j[1]["previous_path_x"];
-                    auto prevPathY = j[1]["previous_path_y"];
-                    // Previous path's end s and d values
-                    double endPathS = j[1]["end_path_s"];
-                    double endPathD = j[1]["end_path_d"];
+            nlohmann::json msgJson;
+            msgJson["next_x"] = nextXVals;
+            msgJson["next_y"] = nextYVals;
 
-                    // Sensor Fusion Data, a list of all other cars on the same side
-                    //   of the road.
-                    auto sensorFusion = j[1]["sensor_fusion"];
-
-                    nlohmann::json msgJson;
-
-                    /**
-                     * TODO: define a path made up of (x,y) points that the car will visit
-                     *   sequentially every .02 seconds
-                     */
-                    CoordinateXY nextXVals;
-                    CoordinateXY nextYVals;
-                    // TODO: prev paths not accounted for
-                    std::tie(nextXVals, nextYVals) = handler({ carX, carY }, { carS, carD }, carYaw, carSpeed);
-
-                    msgJson["next_x"] = nextXVals;
-                    msgJson["next_y"] = nextYVals;
-
-                    auto msg = "42[\"control\"," + msgJson.dump() + "]";
-
-                    webSocket.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
-                }
-            }
+            auto msg = "42[\"control\"," + msgJson.dump() + "]";
+            webSocket.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
         }
     });
 }
@@ -143,18 +118,70 @@ int SimulatorCommunication::run()
 }
 
 
-string SimulatorCommunication::getData(string s)
+std::string SimulatorCommunication::getData(std::string messageString)
 {
-    auto found_null = s.find("null");
-    auto b1 = s.find_first_of("[");
-    auto b2 = s.find_first_of("}");
-    if (found_null != string::npos)
+    auto found_null = messageString.find("null");
+    auto b1 = messageString.find_first_of("[");
+    auto b2 = messageString.find_first_of("}");
+    if (found_null != std::string::npos)
     {
         return "";
     }
-    else if (b1 != string::npos && b2 != string::npos)
+    else if (b1 != std::string::npos && b2 != std::string::npos)
     {
-        return s.substr(b1, b2 - b1 + 2);
+        return messageString.substr(b1, b2 - b1 + 2);
     }
     return "";
+}
+
+SimulatorResponseData SimulatorCommunication::parseData(std::string jsonString)
+{
+    assert(jsonString != "");
+
+    auto jsonObj = nlohmann::json::parse(jsonString);
+    std::string event = jsonObj[0].get<std::string>();
+
+    if (event == "telemetry")
+    {
+        auto messageData = jsonObj[1];
+
+        EgoCarData egoCar {
+            .x = messageData["x"],
+            .y = messageData["y"],
+            .s = messageData["s"],
+            .d = messageData["d"],
+            .yaw = messageData["yaw"],
+            .speed = messageData["speed"]
+        };
+
+        // Previous path data given to the Planner
+        std::vector<double> prevPathX = messageData["previous_path_x"];
+        std::vector<double> prevPathY = messageData["previous_path_y"];
+        // Previous path's end s and d values
+        double endPathS = messageData["end_path_s"];
+        double endPathD = messageData["end_path_d"];
+
+        /** Sensor Fusion Data, a list of all other cars on the same side of the road. */
+        std::vector<OtherCarData> otherCars;
+        for (const std::vector<double>& otherCarVector : messageData["sensor_fusion"])
+        {
+            otherCars.push_back({
+                .id = otherCarVector[0],
+                .x = otherCarVector[1],
+                .y = otherCarVector[2],
+                .s = otherCarVector[3],
+                .d = otherCarVector[4],
+                .dx = otherCarVector[5],
+                .dy = otherCarVector[6]
+            });
+        }
+
+        return { egoCar, prevPathX, prevPathY, endPathS, endPathD, otherCars };
+    }
+    else
+    {
+        std::cerr << "Invalid event received: '" << event << "'" << std::endl;
+        exit(1);
+    }
+
 }

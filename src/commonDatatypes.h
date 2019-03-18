@@ -5,8 +5,26 @@
 
 namespace path_planning
 {
-    using CoordinateXY = std::pair<double, double>;
-    using CoordinateFrenet = std::pair<double, double>;
+    struct EgoCarData
+    {
+        double x;
+        double y;
+        double s;
+        double d;
+        double yaw;
+        double speed;
+    };
+
+    struct OtherCarData
+    {
+        double id;
+        double x;
+        double y;
+        double s;
+        double d;
+        double dx;
+        double dy;
+    };
 }
 
 #endif

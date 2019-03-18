@@ -2,7 +2,6 @@
 #define HELPERS_H
 
 #include <math.h>
-#include <string>
 #include <vector>
 
 
@@ -10,7 +9,7 @@ namespace path_planning
 {
     //
     // Helper functions related to waypoints and converting from XY to Frenet
-    //   or vice versa
+    // or vice versa
     //
 
     // For converting back and forth between radians and degrees.
@@ -152,6 +151,4 @@ namespace path_planning
     }
 }
 
-
-
-#endif // HELPERS_H
+#endif
