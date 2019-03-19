@@ -25,6 +25,15 @@ namespace path_planning
         double dx;
         double dy;
     };
+
+    struct Waypoint
+    {
+        double x;
+        double y;
+        float s;
+        float normX;
+        float normY;
+    };
 }
 
 #endif

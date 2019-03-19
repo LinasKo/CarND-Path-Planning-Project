@@ -12,7 +12,11 @@ namespace path_planning
     class PathPlanner
     {
     public:
+        PathPlanner(std::vector<Waypoint> waypoints);
         std::pair<std::vector<double>, std::vector<double>> planPath(SimulatorResponseData simulatorData);
+
+    private:
+        std::vector<Waypoint> m_waypoints;
     };
 }
 

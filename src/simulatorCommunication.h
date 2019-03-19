@@ -34,10 +34,9 @@ namespace path_planning
         explicit SimulatorCommunication(int websocket_port);
 
         /**
-         * Load up map values for waypoint's x,y,s and d normalized normal vectors
+         * Read map values for waypoint's x,y,s and normalized normal vectors
          */
-        static void readWaypoints(std::string mapFile, std::vector<double>& mapWaypointsX, std::vector<double>& mapWaypointsY,
-            std::vector<double>& mapWaypointsS, std::vector<double>& mapWaypointsDx, std::vector<double>& mapWaypointsDy);
+        static std::vector<Waypoint> readWaypoints(std::string mapFile);
 
         void addDataHandler(std::function<std::pair<std::vector<double>, std::vector<double>>(const SimulatorResponseData&)> handler);
 

@@ -18,7 +18,7 @@ using namespace path_planning;
 using namespace std::placeholders;
 
 
-static const std::string WAYPOINT_MAP_FILE = "../data/highway_map.csv";
+static const std::string WAYPOINT_MAP_FILE = "data/highway_map.csv";
 static constexpr int WEBSOCKET_PORT = 4567;
 
 /** The max s value before wrapping around the track back to 0 */
@@ -29,14 +29,8 @@ int main()
 {
     SimulatorCommunication simComm(WEBSOCKET_PORT);
 
-    std::vector<double> mapWaypointsX;
-    std::vector<double> mapWaypointsY;
-    std::vector<double> mapWaypointsS;
-    std::vector<double> mapWaypointsDx;
-    std::vector<double> mapWaypointsDy;
-    SimulatorCommunication::readWaypoints(WAYPOINT_MAP_FILE, mapWaypointsX, mapWaypointsY, mapWaypointsS, mapWaypointsDx, mapWaypointsDy);
-
-    PathPlanner pathPlanner;
+    std::vector<Waypoint> waypoints = SimulatorCommunication::readWaypoints(WAYPOINT_MAP_FILE);
+    PathPlanner pathPlanner(waypoints);
     simComm.addDataHandler(std::bind(&PathPlanner::planPath, &pathPlanner, _1));
 
     simComm.run();

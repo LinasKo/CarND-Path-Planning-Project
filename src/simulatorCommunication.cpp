@@ -35,10 +35,12 @@ SimulatorCommunication::SimulatorCommunication(int websocket_port) :
     });
 }
 
-void SimulatorCommunication::readWaypoints(std::string mapFile, std::vector<double>& mapWaypointsX, std::vector<double>& mapWaypointsY,
-    std::vector<double>& mapWaypointsS, std::vector<double>& mapWaypointsDx, std::vector<double>& mapWaypointsDy)
+std::vector<Waypoint> SimulatorCommunication::readWaypoints(std::string mapFile)
 {
+    std::vector<Waypoint> waypoints;
+
     std::ifstream inStreamMap(mapFile.c_str(), std::ifstream::in);
+    assert(inStreamMap);
 
     std::string line;
     while (getline(inStreamMap, line))
@@ -47,19 +49,16 @@ void SimulatorCommunication::readWaypoints(std::string mapFile, std::vector<doub
         double x;
         double y;
         float s;
-        float dX;
-        float dY;
+        float normX;
+        float normY;
         iss >> x;
         iss >> y;
         iss >> s;
-        iss >> dX;
-        iss >> dY;
-        mapWaypointsX.push_back(x);
-        mapWaypointsY.push_back(y);
-        mapWaypointsS.push_back(s);
-        mapWaypointsDx.push_back(dX);
-        mapWaypointsDy.push_back(dY);
+        iss >> normX;
+        iss >> normY;
+        waypoints.push_back({x, y, s, normX, normY});
     }
+    return waypoints;
 }
 
 void SimulatorCommunication::addDataHandler(std::function<std::pair<std::vector<double>, std::vector<double>>(const SimulatorResponseData&)> handler)
@@ -81,11 +80,6 @@ void SimulatorCommunication::addDataHandler(std::function<std::pair<std::vector<
             }
 
             SimulatorResponseData simulatorResponse = parseData(jsonStr);
-
-            /**
-             * TODO: define a path made up of (x,y) points that the car will visit
-             *   sequentially every .02 seconds
-             */
 
             std::vector<double> nextXVals;
             std::vector<double> nextYVals;
