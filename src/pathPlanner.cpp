@@ -1,13 +1,14 @@
 #include "pathPlanner.h"
 
 #include <algorithm>
+#include <array>
 #include <cassert>
+#include <cmath>
 #include <iostream>
+#include <limits>
 #include <tuple>
 #include <utility>
 #include <vector>
-#include <limits>
-#include <array>
 
 #include "Eigen-3.3/Eigen"
 
@@ -134,4 +135,23 @@ std::array<double, 6> PathPlanner::polynomialTrajectoryParameters(double totalTi
     Eigen::Vector3d result = params.inverse() * res;
 
     return { startPos, startSpeed, 0.5 * startAcc, result[0], result[1], result[2] };
+}
+
+/*
+ * Fit a polynomial curve of given parameters with increments of time, generating 
+ */
+std::vector<double> generateTrajectoryFromParams(double totalTime, double timeIncrement, std::array<double, 6> params)
+{
+    std::vector<double> results;
+    int resultCount = totalTime / timeIncrement;
+    results.reserve(resultCount);
+
+    for (int i = 1; i <= resultCount; ++i)
+    {
+        double t = timeIncrement * i;
+        double val = params[0] + params[1] * t + params[2] * std::pow(t, 2) + params[3] * std::pow(t, 3) + params[4] * std::pow(t, 4) + params[5] * std::pow(t, 5);
+        results.push_back(val);
+    }
+
+    return results;
 }
