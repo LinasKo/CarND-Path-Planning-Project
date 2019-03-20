@@ -1,153 +1,157 @@
 #ifndef HELPERS_H
 #define HELPERS_H
 
+#include <cassert>
 #include <math.h>
+#include <limits>
 #include <vector>
+#include <utility>
 
 
 namespace path_planning
 {
-    //
-    // Helper functions related to waypoints and converting from XY to Frenet
-    // or vice versa
-    //
+    constexpr double MAP_CENTER_X = 1000;
+    constexpr double MAP_CENTER_Y = 2000;
 
-    // For converting back and forth between radians and degrees.
+    // angle-related functions
     constexpr double pi() { return M_PI; }
     double deg2rad(double x) { return x * pi() / 180; }
     double rad2deg(double x) { return x * 180 / pi(); }
+    double orientation(double y, double x) { return atan2(y, x); }
 
-    // Calculate distance between two points
     double distance(double x1, double y1, double x2, double y2)
     {
         return sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
     }
 
-    // Calculate closest waypoint to current x, y position
-    int ClosestWaypoint(double x, double y, const std::vector<double> &maps_x,
-                        const std::vector<double> &maps_y)
+    /*
+     * Returns the closest waypoint, even if it behind the given point. Returns -1 
+     */
+    int closestWaypoint(double x, double y, const std::vector<Waypoint>& waypoints)
     {
-        double closestLen = 100000; //large number
-        int closestWaypoint = 0;
+        assert(waypoints.size() > 0);
 
-        for (int i = 0; i < maps_x.size(); ++i)
+        double closestLen = std::numeric_limits<double>::max();
+        int closestWaypointIndex = -1;
+
+        for (int i = 0; i < waypoints.size(); ++i)
         {
-            double map_x = maps_x[i];
-            double map_y = maps_y[i];
-            double dist = distance(x, y, map_x, map_y);
+            const double dist = distance(x, y, wp.x, wp.y);
             if (dist < closestLen)
             {
                 closestLen = dist;
-                closestWaypoint = i;
+                closestWaypointIndex = i;
             }
         }
 
-        return closestWaypoint;
+        return closestWaypointIndex;
     }
 
-    // Returns next waypoint of the closest waypoint
-    int NextWaypoint(double x, double y, double theta, const std::vector<double> &maps_x,
-                    const std::vector<double> &maps_y)
+    /*
+     * Returns the closest waypoint ahead of the vehicle / point by making sure to take the orientation into account.
+     */
+    int NextWaypoint(double x, double y, double theta, const std::vector<Waypoints>& waypoints)
     {
-        int closestWaypoint = ClosestWaypoint(x, y, maps_x, maps_y);
+        int closestWaypointIndex = closestWaypoint(x, y, waypoints);
+        Waypoint closestWaypoint = waypoints[closestWaypointIndex];
 
-        double map_x = maps_x[closestWaypoint];
-        double map_y = maps_y[closestWaypoint];
-
-        double heading = atan2((map_y - y), (map_x - x));
-
+        double heading = atan2((map_y - closestWaypoint.y), (map_x - closestWaypoint.x));
         double angle = fabs(theta - heading);
         angle = std::min(2 * pi() - angle, angle);
 
         if (angle > pi() / 2)
         {
-            ++closestWaypoint;
-            if (closestWaypoint == maps_x.size())
+            // Assume waypoints are ordered 
+            ++closestWaypointIndex;
+
+            
+            // Wrap around to waypoint 0
+            if (closestWaypointIndex == maps_x.size())
             {
-                closestWaypoint = 0;
+                closestWaypointIndex = 0;
             }
         }
 
-        return closestWaypoint;
+        return closestWaypointIndex;
     }
 
-    // Transform from Cartesian x,y coordinates to Frenet s,d coordinates
-    std::vector<double> getFrenet(double x, double y, double theta,
-                            const std::vector<double> &maps_x,
-                            const std::vector<double> &maps_y)
+    /*
+     * Transform from Cartesian x,y coordinates to Frenet s,d coordinates
+     */
+    std::pair<double, double> getFrenet(double x, double y, double theta, const std::vector<Waypoint>& waypoints)
     {
-        int next_wp = NextWaypoint(x, y, theta, maps_x, maps_y);
+        int nextWaypointIndex = NextWaypoint(x, y, theta, waypoints);
+        nextWp = waypoints[nextWaypointIndex];
 
-        int prev_wp;
-        prev_wp = next_wp - 1;
-        if (next_wp == 0)
+        int prevWp;
+        prevWp = nextWp - 1;
+        if (nextWp == 0)
         {
-            prev_wp = maps_x.size() - 1;
+            prevWp = maps_x.size() - 1;
         }
 
-        double n_x = maps_x[next_wp] - maps_x[prev_wp];
-        double n_y = maps_y[next_wp] - maps_y[prev_wp];
-        double x_x = x - maps_x[prev_wp];
-        double x_y = y - maps_y[prev_wp];
+        double nX = nextWp.x - prevWp.x;
+        double nY = nextWp.y - prevWp.y;
+        double xX = x - prevWp.x;
+        double yY = y - prevWp.y;
 
         // find the projection of x onto n
-        double proj_norm = (x_x * n_x + x_y * n_y) / (n_x * n_x + n_y * n_y);
-        double proj_x = proj_norm * n_x;
-        double proj_y = proj_norm * n_y;
+        double proj_norm = (xX * nX + yY * nY) / (nX * nX + nY * nY);
+        double projX = proj_norm * nX;
+        double projY = proj_norm * nY;
 
-        double frenet_d = distance(x_x, x_y, proj_x, proj_y);
+        double frenetD = distance(xX, yY, projX, projY);
 
         //see if d value is positive or negative by comparing it to a center point
-        double center_x = 1000 - maps_x[prev_wp];
-        double center_y = 2000 - maps_y[prev_wp];
-        double centerToPos = distance(center_x, center_y, x_x, x_y);
-        double centerToRef = distance(center_x, center_y, proj_x, proj_y);
+        double centerX = MAP_CENTER_X - prevWp.x;
+        double centerY = MAP_CENTER_Y - prevWp.y;
+        double centerToPos = distance(centerX, centerY, xX, yY);
+        double centerToRef = distance(centerX, centerY, projX, projY);
 
         if (centerToPos <= centerToRef)
         {
-            frenet_d *= -1;
+            frenetD *= -1;
         }
 
         // calculate s value
-        double frenet_s = 0;
-        for (int i = 0; i < prev_wp; ++i)
+        double frenetS = 0;
+        for (int i = 0; i < prevWp; ++i)
         {
-            frenet_s += distance(maps_x[i], maps_y[i], maps_x[i + 1], maps_y[i + 1]);
+            frenetS += distance(waypoints[i].x, waypoints[i].y, waypoints[i + 1].x, waypoints[i + 1].y);
         }
 
-        frenet_s += distance(0, 0, proj_x, proj_y);
+        frenetS += distance(0, 0, projX, projY);
 
-        return {frenet_s, frenet_d};
+        return std::make_pair(frenetS, frenetD);
     }
 
-    // Transform from Frenet s,d coordinates to Cartesian x,y
-    std::vector<double> getXY(double s, double d, const std::vector<double> &maps_s,
-                        const std::vector<double> &maps_x,
-                        const std::vector<double> &maps_y)
+    /* 
+     * Transform from Frenet s,d coordinates to Cartesian x,y
+     */
+    std::pair<double, double> getXY(double s, double d, const std::vector<Waypoint>& waypoints)
     {
-        int prev_wp = -1;
-
-        while (s > maps_s[prev_wp + 1] && (prev_wp < (int)(maps_s.size() - 1)))
+        int prevWp = -1;
+        while (s > waypoints[prevWp + 1].s && (prevWp < (int)(waypoints.size() - 1)))
         {
-            ++prev_wp;
+            ++prevWp;
         }
+        assert(prevWp != -1);
 
-        int wp2 = (prev_wp + 1) % maps_x.size();
+        int wp2 = (prevWp + 1) % waypoints.size();
 
-        double heading = atan2((maps_y[wp2] - maps_y[prev_wp]),
-                            (maps_x[wp2] - maps_x[prev_wp]));
+        double heading = atan2(waypoints[wp2].y - prevWp.y, waypoints[wp2].x - prevWp.x);
+
         // the x,y,s along the segment
-        double seg_s = (s - maps_s[prev_wp]);
+        double segS = (s - waypoints[prevWp].s);
+        double segX = prevWp.x + segS * cos(heading);
+        double segY = prevWp.y + segS * sin(heading);
 
-        double seg_x = maps_x[prev_wp] + seg_s * cos(heading);
-        double seg_y = maps_y[prev_wp] + seg_s * sin(heading);
+        double perpHeading = heading - pi() / 2;
 
-        double perp_heading = heading - pi() / 2;
+        double x = segX + d * cos(perpHeading);
+        double y = segY + d * sin(perpHeading);
 
-        double x = seg_x + d * cos(perp_heading);
-        double y = seg_y + d * sin(perp_heading);
-
-        return {x, y};
+        return std::make_pair(x, y);
     }
 }
 

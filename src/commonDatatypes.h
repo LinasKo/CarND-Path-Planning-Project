@@ -1,11 +1,10 @@
 #ifndef COMMON_DATATYPES_H
 #define COMMON_DATATYPES_H
 
-#include <utility>
 
 namespace path_planning
 {
-    struct EgoCarData
+    struct EgoCar
     {
         double x;
         double y;
@@ -15,7 +14,7 @@ namespace path_planning
         double speed;
     };
 
-    struct OtherCarData
+    struct OtherCar
     {
         double id;
         double x;

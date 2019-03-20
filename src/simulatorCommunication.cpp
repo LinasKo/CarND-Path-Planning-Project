@@ -81,8 +81,7 @@ void SimulatorCommunication::addDataHandler(std::function<std::pair<std::vector<
 
             SimulatorResponseData simulatorResponse = parseData(jsonStr);
 
-            std::vector<double> nextXVals;
-            std::vector<double> nextYVals;
+            std::vector<double> nextXVals, nextYVals;
             std::tie(nextXVals, nextYVals) = handler(simulatorResponse);
 
             nlohmann::json msgJson;
@@ -156,7 +155,7 @@ SimulatorResponseData SimulatorCommunication::parseData(std::string jsonString)
         double endPathD = messageData["end_path_d"];
 
         /** Sensor Fusion Data, a list of all other cars on the same side of the road. */
-        std::vector<OtherCarData> otherCars;
+        std::vector<OtherCar> otherCars;
         for (const std::vector<double>& otherCarVector : messageData["sensor_fusion"])
         {
             otherCars.push_back({
