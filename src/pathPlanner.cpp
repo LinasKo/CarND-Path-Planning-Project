@@ -20,6 +20,7 @@ using namespace path_planning;
 
 static constexpr double KEEP_LANE_DURATION_SECONDS = 1.0;
 static constexpr double CHANGE_LANE_DURATION_SECONDS = 5.0;
+static constexpr double SAFETY_DISTANCE_TO_CAR = 5.0;
 
 
 PathPlanner::PathPlanner(std::vector<Waypoint> waypoints) :
@@ -33,7 +34,7 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::planPath(Simula
 
     /* 
      * Assuming:
-     * Set up already: m_waypoints, egoCar
+     * Set up already: m_waypoints, m_egoCar
      * Initial step accounted for already to set up egoCar in initial state
      */
 
@@ -42,6 +43,48 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::planPath(Simula
     assert(closestWaypointId != -1);
 
     return std::make_pair(std::vector<double>(), std::vector<double>());
+}
+
+std::pair<std::vector<double>, std::vector<double>> PathPlanner::GenStraightPath(const EgoCar& egoCar, const std::vector<OtherCar>& otherCars)
+{
+    // TODO: compute velocity and acceleration of egoCar --- egoCar.v, egoCar.a
+
+    const auto predictedCars = predictCars(otherCars, KEEP_LANE_DURATION_SECONDS);
+    int carAheadIndex = getCarAhead(egoCar, predictedCars);
+
+    // TODO: here it's a bit murky when deciding when to use current and predicted car positions.
+
+    if (carAheadIndex == -1 or otherCars[carAheadIndex].s - egoCar.s >= SAFETY_DISTANCE_TO_CAR)
+    {
+        // No car in range
+        auto sTrajectoryParams = polynomialTrajectoryParameters(KEEP_LANE_DURATION_SECONDS,
+            egoCar.s, egoCar.sv, egoCar.sa, egoCar.s + KEEP_LANE_DURATION_SECONDS * SPEED_LIMIT, SPEED_LIMIT, 0.0);
+        auto sTrajectory = generateTrajectoryFromParams(KEEP_LANE_DURATION_SECONDS, PATH_TRAVERSAL_SPEED_SECONDS, sTrajectoryParams);
+
+        // No car in range
+        auto dTrajectoryParams = polynomialTrajectoryParameters(KEEP_LANE_DURATION_SECONDS,
+            egoCar.d, egoCar.dv, egoCar.da, egoCar.d, 0.0, 0.0);
+        auto dTrajectory = generateTrajectoryFromParams(KEEP_LANE_DURATION_SECONDS, PATH_TRAVERSAL_SPEED_SECONDS, dTrajectoryParams);
+
+        std::vector<double> xTrajectory, yTrajectory;
+        xTrajectory.reserve(dTrajectory.size());
+        yTrajectory.reserve(dTrajectory.size());
+        for (int i = 0; i < dTrajectory.size(); ++i)
+        {
+            double x, y;
+            std::tie(x, y) = getXY(sTrajectory[i], dTrajectory[i], m_waypoints);
+            xTrajectory.append(x);
+            yTrajectory.append(y);
+        }
+
+        return std:make_pair(xTrajectory, yTrajectory);
+
+    }
+    else
+    {
+        // Car ahead
+        const OtherCar& carAhead = otherCars[carAheadIndex];
+    }
 }
 
 /*
