@@ -2,10 +2,12 @@
 #define HELPERS_H
 
 #include <cassert>
-#include <math.h>
 #include <limits>
-#include <vector>
+#include <math.h>
 #include <utility>
+#include <vector>
+
+#include "commonDatatypes.h"
 
 
 namespace path_planning
@@ -25,7 +27,7 @@ namespace path_planning
     }
 
     /*
-     * Returns the closest waypoint, even if it behind the given point. Returns -1 
+     * Returns the closest waypoint, even if it behind the given point. Returns -1
      */
     int closestWaypoint(double x, double y, const std::vector<Waypoint>& waypoints)
     {
@@ -36,6 +38,7 @@ namespace path_planning
 
         for (int i = 0; i < waypoints.size(); ++i)
         {
+            const Waypoint& wp = waypoints[i];
             const double dist = distance(x, y, wp.x, wp.y);
             if (dist < closestLen)
             {
@@ -50,23 +53,22 @@ namespace path_planning
     /*
      * Returns the closest waypoint ahead of the vehicle / point by making sure to take the orientation into account.
      */
-    int NextWaypoint(double x, double y, double theta, const std::vector<Waypoints>& waypoints)
+    int NextWaypoint(double x, double y, double theta, const std::vector<Waypoint>& waypoints)
     {
         int closestWaypointIndex = closestWaypoint(x, y, waypoints);
         Waypoint closestWaypoint = waypoints[closestWaypointIndex];
 
-        double heading = atan2((map_y - closestWaypoint.y), (map_x - closestWaypoint.x));
+        double heading = atan2((closestWaypoint.y - y), (closestWaypoint.x - x));
         double angle = fabs(theta - heading);
         angle = std::min(2 * pi() - angle, angle);
 
         if (angle > pi() / 2)
         {
-            // Assume waypoints are ordered 
+            // Assume waypoints are ordered
             ++closestWaypointIndex;
 
-            
             // Wrap around to waypoint 0
-            if (closestWaypointIndex == maps_x.size())
+            if (closestWaypointIndex == waypoints.size())
             {
                 closestWaypointIndex = 0;
             }
@@ -80,15 +82,15 @@ namespace path_planning
      */
     std::pair<double, double> getFrenet(double x, double y, double theta, const std::vector<Waypoint>& waypoints)
     {
-        int nextWaypointIndex = NextWaypoint(x, y, theta, waypoints);
-        nextWp = waypoints[nextWaypointIndex];
+        int nextWpIndex = NextWaypoint(x, y, theta, waypoints);
+        const Waypoint& nextWp = waypoints[nextWpIndex];
 
-        int prevWp;
-        prevWp = nextWp - 1;
-        if (nextWp == 0)
+        int prevWpIndex = nextWpIndex - 1;
+        if (nextWpIndex == 0)
         {
-            prevWp = maps_x.size() - 1;
+            prevWpIndex = waypoints.size() - 1;
         }
+        const Waypoint& prevWp = waypoints[prevWpIndex];
 
         double nX = nextWp.x - prevWp.x;
         double nY = nextWp.y - prevWp.y;
@@ -115,7 +117,7 @@ namespace path_planning
 
         // calculate s value
         double frenetS = 0;
-        for (int i = 0; i < prevWp; ++i)
+        for (int i = 0; i < prevWpIndex; ++i)
         {
             frenetS += distance(waypoints[i].x, waypoints[i].y, waypoints[i + 1].x, waypoints[i + 1].y);
         }
@@ -125,24 +127,25 @@ namespace path_planning
         return std::make_pair(frenetS, frenetD);
     }
 
-    /* 
+    /*
      * Transform from Frenet s,d coordinates to Cartesian x,y
      */
     std::pair<double, double> getXY(double s, double d, const std::vector<Waypoint>& waypoints)
     {
-        int prevWp = -1;
-        while (s > waypoints[prevWp + 1].s && (prevWp < (int)(waypoints.size() - 1)))
+        int prevWpIndex = -1;
+        while (s > waypoints[prevWpIndex + 1].s && (prevWpIndex < (int)(waypoints.size() - 1)))
         {
-            ++prevWp;
+            ++prevWpIndex;
         }
-        assert(prevWp != -1);
+        assert(prevWpIndex != -1);
 
-        int wp2 = (prevWp + 1) % waypoints.size();
+        const Waypoint& prevWp = waypoints[prevWpIndex];
+        const Waypoint& nextWp = waypoints[(prevWpIndex + 1) % waypoints.size()];
 
-        double heading = atan2(waypoints[wp2].y - prevWp.y, waypoints[wp2].x - prevWp.x);
+        double heading = atan2(nextWp.y - prevWp.y, nextWp.x - prevWp.x);
 
         // the x,y,s along the segment
-        double segS = (s - waypoints[prevWp].s);
+        double segS = (s - prevWp.s);
         double segX = prevWp.x + segS * cos(heading);
         double segY = prevWp.y + segS * sin(heading);
 

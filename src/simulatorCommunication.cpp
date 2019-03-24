@@ -22,8 +22,8 @@ static constexpr char WEBSOCKET_FLAG_EVENT = '2';
 static const std::string SIM_MESSAGE_MANUAL_DRIVING = "42[\"manual\",{}]";
 
 
-SimulatorCommunication::SimulatorCommunication(int websocket_port) :
-    m_port { websocket_port }
+SimulatorCommunication::SimulatorCommunication(int websocketPort) :
+    m_port { websocketPort }
 {
     m_hub.onConnection([](uWS::WebSocket<uWS::SERVER> webSocket, uWS::HttpRequest req) {
         std::cout << "Connected!!!" << std::endl;
@@ -35,7 +35,7 @@ SimulatorCommunication::SimulatorCommunication(int websocket_port) :
     });
 }
 
-std::vector<Waypoint> SimulatorCommunication::readWaypoints(std::string mapFile)
+std::vector<Waypoint> SimulatorCommunication::readWaypoints(const std::string& mapFile)
 {
     std::vector<Waypoint> waypoints;
 
@@ -111,7 +111,7 @@ int SimulatorCommunication::run()
 }
 
 
-std::string SimulatorCommunication::getData(std::string messageString)
+std::string SimulatorCommunication::getData(const std::string& messageString)
 {
     auto found_null = messageString.find("null");
     auto b1 = messageString.find_first_of("[");
@@ -127,18 +127,18 @@ std::string SimulatorCommunication::getData(std::string messageString)
     return "";
 }
 
-SimulatorResponseData SimulatorCommunication::parseData(std::string jsonString)
+SimulatorResponseData SimulatorCommunication::parseData(const std::string& jsonString)
 {
     assert(jsonString != "");
 
     auto jsonObj = nlohmann::json::parse(jsonString);
-    std::string event = jsonObj[0].get<std::string>();
+    const std::string event = jsonObj[0].get<std::string>();
 
     if (event == "telemetry")
     {
         auto messageData = jsonObj[1];
 
-        EgoCarData egoCar {
+        EgoCar egoCar {
             .x = messageData["x"],
             .y = messageData["y"],
             .s = messageData["s"],
