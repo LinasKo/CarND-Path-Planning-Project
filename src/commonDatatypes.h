@@ -19,10 +19,10 @@ namespace path_planning
         double id;
         double x;
         double y;
-        double s;
-        double d;
         double dx;
         double dy;
+        double s;
+        double d;
     };
 
     struct Waypoint

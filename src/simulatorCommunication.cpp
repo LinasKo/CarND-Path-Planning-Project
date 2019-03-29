@@ -163,10 +163,10 @@ SimulatorResponseData SimulatorCommunication::parseData(const std::string& jsonS
                 .id = otherCarVector[0],
                 .x = otherCarVector[1],
                 .y = otherCarVector[2],
-                .s = otherCarVector[3],
-                .d = otherCarVector[4],
-                .dx = otherCarVector[5],
-                .dy = otherCarVector[6]
+                .dx = otherCarVector[3],
+                .dy = otherCarVector[4],
+                .s = otherCarVector[5],
+                .d = otherCarVector[6]
             });
         }
 

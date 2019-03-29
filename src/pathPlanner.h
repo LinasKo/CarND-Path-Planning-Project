@@ -26,6 +26,10 @@ namespace
         double velocity1 { 0.0 };
         double acceleration1 { 0.0 };
     };
+
+    static constexpr double D_LEFT_LANE = 2.0;
+    static constexpr double D_MIDDLE_LANE = 6.0;
+    static constexpr double D_RIGHT_LANE = 10.0;
 }
 
 namespace path_planning
@@ -62,7 +66,12 @@ namespace path_planning
         /*
         * Returns the index of vehicle in front and -1 otherwise.
         */
-        int getCarAhead(const EgoCar& egoCar, const std::vector<OtherCar>& otherCars);
+        int getCarAhead(const EgoCar& egoCar, const std::vector<OtherCar>& otherCars) const;
+
+        /*
+         * Get estimated speeds in each lane.
+         */
+        std::array<double, 3> getLaneSpeeds(EgoCar egoCar, const std::vector<OtherCar>& otherCars) const;
 
         /*
         * Predict the locations of other vehicles on the road after some time
@@ -83,10 +92,10 @@ namespace path_planning
         */
         static std::vector<double> generateTrajectoryFromParams(double totalTime, double timeIncrement, const std::array<double, 6>& polyParams);
 
-
         const std::vector<Waypoint> m_waypoints;
         std::vector<double> m_prevSentTrajectoryX, m_prevSentTrajectoryY;
         std::deque<double> m_trajectoryHistoryX, m_trajectoryHistoryY;
+        double m_currentLaneD { D_MIDDLE_LANE };
     };
 }
 

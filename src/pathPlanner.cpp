@@ -35,9 +35,7 @@ static constexpr double MAX_ACCELERATION = 10.0 * 0.5;
 static constexpr unsigned TRAJECTORY_HISTORY_LENGTH = 5u;
 static_assert(TRAJECTORY_HISTORY_LENGTH >= 4);
 
-static constexpr double D_LEFT_LANE = 2.0;
-static constexpr double D_MIDDLE_LANE = 6.0;
-static constexpr double D_RIGHT_LANE = 10.0;
+static constexpr double LANE_SPEED_FORWARD_SCAN_RANGE = SPEED_LIMIT_METRES_PER_SECOND * 3.0;
 
 
 PathPlanner::PathPlanner(std::vector<Waypoint> waypoints) :
@@ -50,6 +48,9 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::planPath(const 
     updateTrajectoryHistory(simulatorData);
     Kinematics kinematics = computeXyKinematics();
     spdlog::trace("[planPath] Kinematics: {}, {}, {}, {}", kinematics.velocity0, kinematics.acceleration0, kinematics.velocity1, kinematics.acceleration1);
+
+    const std::array<double, 3> laneSpeeds = getLaneSpeeds(simulatorData.egoCar, simulatorData.otherCars);
+    spdlog::debug("[planPath] Lane Speeds: {}, {}, {}", laneSpeeds[0], laneSpeeds[1], laneSpeeds[2]);
 
     std::pair<std::vector<double>, std::vector<double>> xyTrajectory;
     if (true)
@@ -68,21 +69,6 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::planPath(const 
 
 void PathPlanner::updateTrajectoryHistory(const SimulatorResponseData& simulatorData)
 {
-    // std::cout << "Ego X: " << simulatorData.egoCar.x << std::endl;
-    // std::cout << "End Path S, D: " << simulatorData.endPathS << ", " << simulatorData.endPathD << std::endl;
-    // std::cout << "Prev Path (X, Y):" << std::endl;
-    // for (auto i = 0; i < simulatorData.prevPathX.size(); ++i)
-    // {
-    //     std::cout << "(" << simulatorData.prevPathX[i] << ", " << simulatorData.prevPathY[i] << "), ";
-    // }
-    // std::cout << std::endl;
-    // std::cout << "Prev Sent Path (X, Y):" << std::endl;
-    // for (auto i = 0; i < m_prevSentTrajectoryX.size(); ++i)
-    // {
-    //     std::cout << "(" << m_prevSentTrajectoryX[i] << ", " << m_prevSentTrajectoryY[i] << "), ";
-    // }
-    // std::cout << std::endl;
-
     assert(m_prevSentTrajectoryX.size() == m_prevSentTrajectoryY.size());
     assert(simulatorData.prevPathX.size() == simulatorData.prevPathY.size());
 
@@ -113,7 +99,7 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::genStraightPath
     const EgoCar& egoCar, const Kinematics& xyKinematics, const std::vector<OtherCar>& otherCars)
 {
     // Account for max acceleration
-    spdlog::debug("[genStraightPath] EgoCar speed: {}", MPH_TO_METRES_PER_SECOND(egoCar.speed));
+    spdlog::trace("[genStraightPath] EgoCar speed: {}", MPH_TO_METRES_PER_SECOND(egoCar.speed));
     double maxSpeed = std::min(SPEED_LIMIT_METRES_PER_SECOND, MPH_TO_METRES_PER_SECOND(egoCar.speed) + MAX_ACCELERATION);
 
     // Estimate target S point, as well as xy speed vector
@@ -142,46 +128,6 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::genStraightPath
     std::vector<double> yTrajectory = generateTrajectoryFromParams(KEEP_LANE_DURATION_SECONDS, NODE_TRAVERSAL_RATE_SECONDS, yParams);
 
     return std::make_pair(xTrajectory, yTrajectory);
-
-
-    // TODO: compute velocity and acceleration of egoCar --- egoCar.v, egoCar.a
-
-    // const auto predictedCars = predictCars(otherCars, KEEP_LANE_DURATION_SECONDS);
-    // int carAheadIndex = getCarAhead(egoCar, predictedCars);
-
-    // // TODO: here it's a bit murky when deciding when to use current and predicted car positions.
-
-    // if (carAheadIndex == -1 or otherCars[carAheadIndex].s - egoCar.s >= SAFETY_DISTANCE_TO_OTHER_CAR)
-    // {
-    //     // No car in range
-    //     auto sTrajectoryParams = polynomialTrajectoryParameters(KEEP_LANE_DURATION_SECONDS,
-    //         egoCar.s, egoCar.sv, egoCar.sa, egoCar.s + KEEP_LANE_DURATION_SECONDS * SPEED_LIMIT_METRES_PER_SECOND, SPEED_LIMIT_METRES_PER_SECOND, 0.0);
-    //     auto sTrajectory = generateTrajectoryFromParams(KEEP_LANE_DURATION_SECONDS, NODE_TRAVERSAL_RATE_SECONDS, sTrajectoryParams);
-
-    //     // No car in range
-    //     auto dTrajectoryParams = polynomialTrajectoryParameters(KEEP_LANE_DURATION_SECONDS,
-    //         egoCar.d, egoCar.dv, egoCar.da, egoCar.d, 0.0, 0.0);
-    //     auto dTrajectory = generateTrajectoryFromParams(KEEP_LANE_DURATION_SECONDS, NODE_TRAVERSAL_RATE_SECONDS, dTrajectoryParams);
-
-    //     std::vector<double> xTrajectory, yTrajectory;
-    //     xTrajectory.reserve(dTrajectory.size());
-    //     yTrajectory.reserve(dTrajectory.size());
-    //     for (int i = 0; i < dTrajectory.size(); ++i)
-    //     {
-    //         double x, y;
-    //         std::tie(x, y) = getXY(sTrajectory[i], dTrajectory[i], m_waypoints);
-    //         xTrajectory.append(x);
-    //         yTrajectory.append(y);
-    //     }
-
-    //     return std:make_pair(xTrajectory, yTrajectory);
-
-    // }
-    // else
-    // {
-    //     // Car ahead
-    //     const OtherCar& carAhead = otherCars[carAheadIndex];
-    // }
 }
 
 Kinematics PathPlanner::computeSdKinematics()
@@ -247,10 +193,7 @@ Kinematics PathPlanner::computeXyKinematics()
     return { xVelocity1, xAcceleration, yVelocity1, yAcceleration };
 }
 
-/*
- * Returns the index of vehicle in front and -1 otherwise.
- */
-int PathPlanner::getCarAhead(const EgoCar& egoCar, const std::vector<OtherCar>& otherCars)
+int PathPlanner::getCarAhead(const EgoCar& egoCar, const std::vector<OtherCar>& otherCars) const
 {
     int carAheadIndex = -1;
     double minSDist = std::numeric_limits<double>::max();
@@ -258,7 +201,9 @@ int PathPlanner::getCarAhead(const EgoCar& egoCar, const std::vector<OtherCar>& 
     for (int i = 0; i < otherCars.size(); ++i)
     {
         const OtherCar& otherCar = otherCars[i];
-        if (otherCar.d == egoCar.d and otherCar.s >= egoCar.s)
+
+        // TODO: does not account for wrap-around in S
+        if (std::abs(otherCar.d - egoCar.d) < 1.0 and otherCar.s >= egoCar.s)
         {
             double sDist = otherCar.s - egoCar.s;
             if (sDist < minSDist)
@@ -270,6 +215,36 @@ int PathPlanner::getCarAhead(const EgoCar& egoCar, const std::vector<OtherCar>& 
     }
 
     return carAheadIndex;
+}
+
+std::array<double, 3> PathPlanner::getLaneSpeeds(EgoCar egoCar, const std::vector<OtherCar>& otherCars) const
+{
+    std::array<double, 3> speeds;
+    const std::array<double, 3> lanes {D_LEFT_LANE, D_MIDDLE_LANE, D_RIGHT_LANE};
+
+    for (auto i = 0; i < lanes.size(); ++i)
+    {
+        egoCar.d = lanes[i];
+        int carAheadIndex = getCarAhead(egoCar, otherCars);
+        spdlog::trace("[getLaneSpeeds] Car ahead: {}", carAheadIndex);
+
+        if (carAheadIndex == -1)
+        {
+            speeds[i] = SPEED_LIMIT_METRES_PER_SECOND;
+        }
+        else if (otherCars[carAheadIndex].s - egoCar.s > LANE_SPEED_FORWARD_SCAN_RANGE)
+        {
+            speeds[i] = SPEED_LIMIT_METRES_PER_SECOND;
+        }
+        else
+        {
+            const auto& carAhead = otherCars[carAheadIndex];
+            spdlog::debug("[getLaneSpeeds] Other car's X speed: {}", carAhead.dx);
+            speeds[i] = std::sqrt(carAhead.dx * carAhead.dx + carAhead.dy * carAhead.dy);
+        }
+    }
+
+    return speeds;
 }
 
 std::vector<OtherCar> PathPlanner::predictCars(const std::vector<OtherCar>& otherCars, double deltaTime)
