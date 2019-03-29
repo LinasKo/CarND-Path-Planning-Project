@@ -20,12 +20,17 @@
 using namespace path_planning;
 
 
-static constexpr double KEEP_LANE_DURATION_SECONDS = 3.0;
+static constexpr double KEEP_LANE_DURATION_SECONDS = 2.5;
 static constexpr double CHANGE_LANE_DURATION_SECONDS = 5.0;
 static constexpr double NODE_TRAVERSAL_RATE_SECONDS = 0.02;
 
 static constexpr double SAFETY_DISTANCE_TO_OTHER_CAR = 5.0;
-static constexpr double SPEED_LIMIT_METRES_PER_SECOND = (50.0 * 0.9) / 3600.0 * 1609.344;  // Simulator coordinates == metres
+static constexpr double MPH_TO_METRES_PER_SECOND(const double mph)
+{
+    return mph / 3600.0 * 1609.344;
+}
+static constexpr double SPEED_LIMIT_METRES_PER_SECOND = MPH_TO_METRES_PER_SECOND(50.0 * 0.9);  // Simulator coordinates == metres.
+static constexpr double MAX_ACCELERATION = 10.0 * 0.5;
 
 static constexpr unsigned TRAJECTORY_HISTORY_LENGTH = 5u;
 static_assert(TRAJECTORY_HISTORY_LENGTH >= 4);
@@ -44,7 +49,7 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::planPath(const 
 {
     updateTrajectoryHistory(simulatorData);
     Kinematics kinematics = computeXyKinematics();
-    spdlog::debug("[planPath] Kinematics: {}, {}, {}, {}", kinematics.velocity0, kinematics.acceleration0, kinematics.velocity1, kinematics.acceleration1);
+    spdlog::trace("[planPath] Kinematics: {}, {}, {}, {}", kinematics.velocity0, kinematics.acceleration0, kinematics.velocity1, kinematics.acceleration1);
 
     std::pair<std::vector<double>, std::vector<double>> xyTrajectory;
     if (true)
@@ -107,8 +112,12 @@ void PathPlanner::updateTrajectoryHistory(const SimulatorResponseData& simulator
 std::pair<std::vector<double>, std::vector<double>> PathPlanner::genStraightPath(
     const EgoCar& egoCar, const Kinematics& xyKinematics, const std::vector<OtherCar>& otherCars)
 {
+    // Account for max acceleration
+    spdlog::debug("[genStraightPath] EgoCar speed: {}", MPH_TO_METRES_PER_SECOND(egoCar.speed));
+    double maxSpeed = std::min(SPEED_LIMIT_METRES_PER_SECOND, MPH_TO_METRES_PER_SECOND(egoCar.speed) + MAX_ACCELERATION);
+
     // Estimate target S point, as well as xy speed vector
-    const double nextS = egoCar.s + SPEED_LIMIT_METRES_PER_SECOND * KEEP_LANE_DURATION_SECONDS;
+    const double nextS = egoCar.s + maxSpeed * KEEP_LANE_DURATION_SECONDS;
     const double auxS = nextS - 0.01;
 
     double nextX, nextY;
@@ -117,51 +126,20 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::genStraightPath
     double auxX, auxY;
     std::tie(auxX, auxY) = getXY(auxS, D_MIDDLE_LANE, m_waypoints);
 
-    double velocityProportionX = (nextX - auxX) / ((nextX - auxX) + (nextY - auxY));
-    double velocityProportionY = (nextY - auxY) / ((nextX - auxX) + (nextY - auxY));
-    assert(velocityProportionX + velocityProportionY > 0.99 && velocityProportionX + velocityProportionY < 1.01);
+    double velocityProportionX = (nextX - auxX) / distance(nextX, nextY, auxX, auxY);
+    double velocityProportionY = (nextY - auxY) / distance(nextX, nextY, auxX, auxY);
 
     // Generate trajectories
     const std::array<double, 6> xParams = polynomialTrajectoryParameters(KEEP_LANE_DURATION_SECONDS,
         egoCar.x, xyKinematics.velocity0, xyKinematics.acceleration0,
-        nextX, SPEED_LIMIT_METRES_PER_SECOND * velocityProportionX, 0.0);
+        nextX, maxSpeed * velocityProportionX, 0.0);
 
     const std::array<double, 6> yParams = polynomialTrajectoryParameters(KEEP_LANE_DURATION_SECONDS,
         egoCar.y, xyKinematics.velocity1, xyKinematics.acceleration1,
-        nextY, SPEED_LIMIT_METRES_PER_SECOND * velocityProportionY, 0.0);
+        nextY, maxSpeed * velocityProportionY, 0.0);
 
     std::vector<double> xTrajectory = generateTrajectoryFromParams(KEEP_LANE_DURATION_SECONDS, NODE_TRAVERSAL_RATE_SECONDS, xParams);
     std::vector<double> yTrajectory = generateTrajectoryFromParams(KEEP_LANE_DURATION_SECONDS, NODE_TRAVERSAL_RATE_SECONDS, yParams);
-
-
-
-
-    // // TODO: Wrong approach: compute S and D trajectories separately
-    // // Change to: Use S and D to estimate required kinematics. Compute X and Y trajectories separately, based on kinematics.
-    // const std::array<double, 6> sParams = polynomialTrajectoryParameters(KEEP_LANE_DURATION_SECONDS,
-    //     egoCar.s, kinematics.sVelocity, kinematics.sAcceleration,
-    //     egoCar.s + SPEED_LIMIT_METRES_PER_SECOND * KEEP_LANE_DURATION_SECONDS, SPEED_LIMIT_METRES_PER_SECOND, 0.0);
-
-    // const std::array<double, 6> dParams = polynomialTrajectoryParameters(KEEP_LANE_DURATION_SECONDS,
-    //     egoCar.d, kinematics.dVelocity, kinematics.dAcceleration,
-    //     D_LEFT_LANE, 0.0, 0.0);
-
-    // std::vector<double> sTrajectory = generateTrajectoryFromParams(KEEP_LANE_DURATION_SECONDS, NODE_TRAVERSAL_RATE_SECONDS, sParams);
-    // std::vector<double> dTrajectory = generateTrajectoryFromParams(KEEP_LANE_DURATION_SECONDS, NODE_TRAVERSAL_RATE_SECONDS, dParams);
-    // assert(sTrajectory.size() == dTrajectory.size());
-
-    // std::vector<double> xTrajectory, yTrajectory;
-    // xTrajectory.reserve(sTrajectory.size());
-    // yTrajectory.reserve(sTrajectory.size());
-    // for (auto i = 0; i < sTrajectory.size(); ++i)
-    // {
-    //     spdlog::debug("s, d: {}, {}, {}", sTrajectory[i], dTrajectory[i]);
-
-    //     double x, y;
-    //     std::tie(x, y) = getXY(sTrajectory[i], dTrajectory[i], m_waypoints);
-    //     xTrajectory.push_back(x);
-    //     yTrajectory.push_back(y);
-    // }
 
     return std::make_pair(xTrajectory, yTrajectory);
 
@@ -322,7 +300,7 @@ std::vector<OtherCar> PathPlanner::predictCars(const std::vector<OtherCar>& othe
 std::array<double, 6> PathPlanner::polynomialTrajectoryParameters(
     double totalTime, double startPos, double startSpeed, double startAcc, double endPos, double endSpeed, double endAcc)
 {
-    spdlog::debug("[polynomialTrajectoryParameters] Start params: ({}, {}, {}), End params: ({}, {}, {})", totalTime, startPos, startSpeed, startAcc, endPos, endSpeed, endAcc);
+    spdlog::trace("[polynomialTrajectoryParameters] Start params: ({}, {}, {}), End params: ({}, {}, {})", totalTime, startPos, startSpeed, startAcc, endPos, endSpeed, endAcc);
 
     Eigen::Matrix3d params;
     params <<     pow(totalTime, 3),      pow(totalTime, 4),      pow(totalTime, 5),
