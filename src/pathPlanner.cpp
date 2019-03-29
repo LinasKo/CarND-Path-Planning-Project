@@ -19,6 +19,7 @@
 
 using namespace path_planning;
 
+static constexpr double LANE_CHANGE_COST = 1.0;  // penalty to speed when deciding whether to change to a faster lane
 
 static constexpr double KEEP_LANE_DURATION_SECONDS = 2.5;
 static constexpr double CHANGE_LANE_DURATION_SECONDS = 5.0;
@@ -50,17 +51,33 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::planPath(const 
     spdlog::trace("[planPath] Kinematics: {}, {}, {}, {}", kinematics.velocity0, kinematics.acceleration0, kinematics.velocity1, kinematics.acceleration1);
 
     const std::array<double, 3> laneSpeeds = getLaneSpeeds(simulatorData.egoCar, simulatorData.otherCars);
-    spdlog::debug("[planPath] Lane Speeds: {}, {}, {}", laneSpeeds[0], laneSpeeds[1], laneSpeeds[2]);
+    spdlog::trace("[planPath] Lane Speeds: {}, {}, {}", laneSpeeds[0], laneSpeeds[1], laneSpeeds[2]);
 
-    std::pair<std::vector<double>, std::vector<double>> xyTrajectory;
-    if (true)
+    if (m_currentLaneD == D_LEFT_LANE && laneSpeeds[1] - LANE_CHANGE_COST > laneSpeeds[0])
     {
-        xyTrajectory = genStraightPath(simulatorData.egoCar, kinematics, simulatorData.otherCars);
+        spdlog::info("[planPath] Changing to middle lane.");
+        m_currentLaneD = D_MIDDLE_LANE;
     }
-    else
+    else if (m_currentLaneD == D_RIGHT_LANE && laneSpeeds[1] - LANE_CHANGE_COST > laneSpeeds[2])
     {
-        // Gen some other type of path
+        spdlog::info("[planPath] Changing to middle lane.");
+        m_currentLaneD = D_MIDDLE_LANE;
     }
+    else if (m_currentLaneD == D_MIDDLE_LANE && (laneSpeeds[0] - LANE_CHANGE_COST > laneSpeeds[1] || laneSpeeds[2] - LANE_CHANGE_COST > laneSpeeds[1]))
+    {
+        if (laneSpeeds[0] > laneSpeeds[2])
+        {
+            spdlog::info("[planPath] Changing to left lane.");
+            m_currentLaneD = D_LEFT_LANE;
+        }
+        else
+        {
+            spdlog::info("[planPath] Changing to right lane.");
+            m_currentLaneD = D_RIGHT_LANE;
+        }
+    }
+
+    std::pair<std::vector<double>, std::vector<double>> xyTrajectory = genPath(simulatorData.egoCar, kinematics, simulatorData.otherCars);
 
     m_prevSentTrajectoryX = xyTrajectory.first;
     m_prevSentTrajectoryY = xyTrajectory.second;
@@ -95,11 +112,11 @@ void PathPlanner::updateTrajectoryHistory(const SimulatorResponseData& simulator
     spdlog::trace("XY history queue size is now ({}, {})", m_trajectoryHistoryX.size(), m_trajectoryHistoryY.size());
 }
 
-std::pair<std::vector<double>, std::vector<double>> PathPlanner::genStraightPath(
+std::pair<std::vector<double>, std::vector<double>> PathPlanner::genPath(
     const EgoCar& egoCar, const Kinematics& xyKinematics, const std::vector<OtherCar>& otherCars)
 {
     // Account for max acceleration
-    spdlog::trace("[genStraightPath] EgoCar speed: {}", MPH_TO_METRES_PER_SECOND(egoCar.speed));
+    spdlog::trace("[genPath] EgoCar speed: {}", MPH_TO_METRES_PER_SECOND(egoCar.speed));
     double maxSpeed = std::min(SPEED_LIMIT_METRES_PER_SECOND, MPH_TO_METRES_PER_SECOND(egoCar.speed) + MAX_ACCELERATION);
 
     // Estimate target S point, as well as xy speed vector
@@ -107,10 +124,10 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::genStraightPath
     const double auxS = nextS - 0.01;
 
     double nextX, nextY;
-    std::tie(nextX, nextY) = getXY(nextS, D_MIDDLE_LANE, m_waypoints);
+    std::tie(nextX, nextY) = getXY(nextS, m_currentLaneD, m_waypoints);
 
     double auxX, auxY;
-    std::tie(auxX, auxY) = getXY(auxS, D_MIDDLE_LANE, m_waypoints);
+    std::tie(auxX, auxY) = getXY(auxS, m_currentLaneD, m_waypoints);
 
     double velocityProportionX = (nextX - auxX) / distance(nextX, nextY, auxX, auxY);
     double velocityProportionY = (nextY - auxY) / distance(nextX, nextY, auxX, auxY);
@@ -239,7 +256,6 @@ std::array<double, 3> PathPlanner::getLaneSpeeds(EgoCar egoCar, const std::vecto
         else
         {
             const auto& carAhead = otherCars[carAheadIndex];
-            spdlog::debug("[getLaneSpeeds] Other car's X speed: {}", carAhead.dx);
             speeds[i] = std::sqrt(carAhead.dx * carAhead.dx + carAhead.dy * carAhead.dy);
         }
     }

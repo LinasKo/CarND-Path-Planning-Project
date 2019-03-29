@@ -47,9 +47,9 @@ namespace path_planning
         void updateTrajectoryHistory(const SimulatorResponseData& simulatorData);
 
         /*
-         * Generate a XY trajectory for a straight path
+         * Generate a XY trajectory for a path, covering both straight-line movements, and lane changing activities
          */
-        std::pair<std::vector<double>, std::vector<double>> genStraightPath(
+        std::pair<std::vector<double>, std::vector<double>> genPath(
             const EgoCar& egoCar, const Kinematics& xyKinematics, const std::vector<OtherCar>& otherCars);
 
 
