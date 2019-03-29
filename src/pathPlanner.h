@@ -2,11 +2,31 @@
 #define PATH_PLANNER_H
 
 #include <array>
+#include <deque>
 #include <vector>
 
 #include "commonDatatypes.h"
 #include "simulatorCommunication.h"
 
+
+namespace
+{
+    struct Kinematics
+    {
+        Kinematics() = default;
+        Kinematics(double velocity0, double acceleration0, double velocity1, double acceleration1) :
+            velocity0(velocity0),
+            acceleration0(acceleration0),
+            velocity1(velocity1),
+            acceleration1(acceleration1)
+        {};
+
+        double velocity0 { 0.0 };
+        double acceleration0 { 0.0 };
+        double velocity1 { 0.0 };
+        double acceleration1 { 0.0 };
+    };
+}
 
 namespace path_planning
 {
@@ -17,6 +37,28 @@ namespace path_planning
         std::pair<std::vector<double>, std::vector<double>> planPath(const SimulatorResponseData& simulatorData);
 
     private:
+        /*
+         * Update the history of the trajectory
+         */
+        void updateTrajectoryHistory(const SimulatorResponseData& simulatorData);
+
+        /*
+         * Generate a XY trajectory for a straight path
+         */
+        std::pair<std::vector<double>, std::vector<double>> genStraightPath(
+            const EgoCar& egoCar, const Kinematics& xyKinematics, const std::vector<OtherCar>& otherCars);
+
+
+        /*
+         * Compute S and D velocity and acceleration of the vehicle
+         */
+        Kinematics computeSdKinematics();
+
+        /*
+         * Compute X and Y velocity and acceleration of the vehicle
+         */
+        Kinematics computeXyKinematics();
+
         /*
         * Returns the index of vehicle in front and -1 otherwise.
         */
@@ -41,8 +83,10 @@ namespace path_planning
         */
         static std::vector<double> generateTrajectoryFromParams(double totalTime, double timeIncrement, const std::array<double, 6>& polyParams);
 
-        std::vector<Waypoint> m_waypoints;
-        EgoCar m_egoCar;
+
+        const std::vector<Waypoint> m_waypoints;
+        std::vector<double> m_prevSentTrajectoryX, m_prevSentTrajectoryY;
+        std::deque<double> m_trajectoryHistoryX, m_trajectoryHistoryY;
     };
 }
 

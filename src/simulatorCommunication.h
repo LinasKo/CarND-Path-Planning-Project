@@ -6,9 +6,9 @@
 #include <utility>
 #include <vector>
 
-#include "commonDatatypes.h"
-
 #include <uWS/uWS.h>
+
+#include "commonDatatypes.h"
 
 
 namespace path_planning

@@ -9,9 +9,10 @@
 #include <vector>
 
 #include <uWS/uWS.h>
+#include "json/json.hpp"
 
 #include "commonDatatypes.h"
-#include "json/json.hpp"
+
 
 using namespace path_planning;
 
@@ -63,7 +64,7 @@ std::vector<Waypoint> SimulatorCommunication::readWaypoints(const std::string& m
 
 void SimulatorCommunication::addDataHandler(std::function<std::pair<std::vector<double>, std::vector<double>>(const SimulatorResponseData&)> handler)
 {
-    m_hub.onMessage([handler](uWS::WebSocket<uWS::SERVER> webSocket, char *data, size_t length, uWS::OpCode opCode)
+    m_hub.onMessage([handler](uWS::WebSocket<uWS::SERVER> webSocket, char* data, size_t length, uWS::OpCode opCode)
     {
         /* "42" at the start of the message means there's a websocket message event.
          * The 4 signifies a websocket message

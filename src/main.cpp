@@ -4,13 +4,11 @@
 #include <string>
 #include <vector>
 
-#include <uWS/uWS.h>
-
-#include "Eigen-3.3/Eigen/Core"
-#include "Eigen-3.3/Eigen/QR"
+#include "spdlog/spdlog.h"
 
 #include "pathPlanner.h"
 #include "simulatorCommunication.h"
+
 
 using namespace path_planning;
 using namespace std::placeholders;
@@ -25,6 +23,7 @@ static constexpr double MAX_S = 6945.554;
 
 int main()
 {
+    spdlog::set_level(spdlog::level::debug);
     SimulatorCommunication simComm(WEBSOCKET_PORT);
 
     std::vector<Waypoint> waypoints = SimulatorCommunication::readWaypoints(WAYPOINT_MAP_FILE);
