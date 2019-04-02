@@ -6,6 +6,7 @@
 #include <cmath>
 #include <iostream>
 #include <limits>
+#include <numeric>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -53,8 +54,11 @@ PathPlanner::PathPlanner(std::vector<Waypoint> waypoints) :
 std::pair<std::vector<double>, std::vector<double>> PathPlanner::planPath(const SimulatorResponseData& simulatorData)
 {
     updateTrajectoryHistory(simulatorData);
+    spdlog::debug("[planPath] EgoCar: x={}, y={}, s={}, d={}", simulatorData.egoCar.x, simulatorData.egoCar.y, simulatorData.egoCar.s, simulatorData.egoCar.d);
+
     Kinematics kinematics = computeXyKinematics();
-    spdlog::trace("[planPath] Kinematics: {}, {}, {}, {}", kinematics.velocity0, kinematics.acceleration0, kinematics.velocity1, kinematics.acceleration1);
+    // Kinematics kinematics = computeXyKinematicsAvg();  // DOES NOT WORK - average velocity relies on previous state too much
+    spdlog::debug("[planPath] XY Kinematics: vx={}, ax={}, vy={}, ay={}", kinematics.velocity0, kinematics.acceleration0, kinematics.velocity1, kinematics.acceleration1);
 
     const std::array<double, 3> laneSpeeds = getLaneSpeeds(simulatorData.egoCar, simulatorData.otherCars);
     spdlog::trace("[planPath] Lane Speeds: {}, {}, {}", laneSpeeds[0], laneSpeeds[1], laneSpeeds[2]);
@@ -64,12 +68,12 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::planPath(const 
     if (std::abs(simulatorData.egoCar.d - m_currentLaneD) > D_LIMIT_FOR_LANE_CHANGE_PENALTY)
     {
         m_laneChangeDelay = LANE_CHANGE_PENALTY;
-        spdlog::trace("Applied lane change penalty for d distance of {}.", std::abs(simulatorData.egoCar.d - m_currentLaneD));
+        spdlog::trace("[planPath] Applied lane change penalty for d distance of {}.", std::abs(simulatorData.egoCar.d - m_currentLaneD));
     }
     else if (m_laneChangeDelay != 0)
     {
         --m_laneChangeDelay;
-        spdlog::trace("Remaining lane change penalty: {}", m_laneChangeDelay);
+        spdlog::trace("[planPath] Remaining lane change penalty: {}", m_laneChangeDelay);
     }
     else
     {
@@ -116,7 +120,40 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::planPath(const 
 
     m_prevSentTrajectoryX = xySmooth.first;
     m_prevSentTrajectoryY = xySmooth.second;
+
+    spdlog::debug("[planPath] --- --- --- --- ---");
     return xySmooth;
+
+    // TODO: looking at the logs, it seems thatm aybe when the car goes out of control, it is because the d value cannot stabilize at the lane centre and just fluctuates wildly, affecting velocity / acceleration.
+    /*
+     * At the same time, it actually doesn't look like that, so I don't know what to think. The car can just spin out of control out of the blue, while going straight. Maybe I should watch the tail of the planned trajectory.
+     *
+            [2019-04-02 22:42:52.164] [debug] [planPath] XY Kinematics: vx=16.2833, ax=-0.66847, vy=2.84658, ay=0.775625
+            [2019-04-02 22:42:52.164] [debug] [planPath] --- --- --- --- ---
+            [2019-04-02 22:42:52.220] [debug] [planPath] EgoCar: x=1880.44, y=1147.46, s=1106.38, d=5.49663
+            [2019-04-02 22:42:52.220] [debug] [planPath] XY Kinematics: vx=16.2545, ax=-0.523559, vy=2.88454, ay=0.749856
+            [2019-04-02 22:42:52.220] [debug] [planPath] --- --- --- --- ---
+            [2019-04-02 22:42:52.272] [debug] [planPath] EgoCar: x=1881.09, y=1147.57, s=1107.04, d=5.5238
+            [2019-04-02 22:42:52.272] [debug] [planPath] XY Kinematics: vx=16.2395, ax=-5.68126, vy=2.9066, ay=3.64966
+            [2019-04-02 22:42:52.272] [debug] [planPath] --- --- --- --- ---
+            [2019-04-02 22:42:52.328] [debug] [planPath] EgoCar: x=1882.07, y=1147.75, s=1108.03, d=5.56557
+            [2019-04-02 22:42:52.328] [debug] [planPath] XY Kinematics: vx=15.9803, ax=-4.90123, vy=3.07518, ay=3.21321
+            [2019-04-02 22:42:52.328] [debug] [planPath] --- --- --- --- ---
+            [2019-04-02 22:42:52.380] [debug] [planPath] EgoCar: x=1883, y=1147.95, s=1108.98, d=5.57787
+            [2019-04-02 22:42:52.380] [debug] [planPath] XY Kinematics: vx=15.7583, ax=-4.17558, vy=3.22307, ay=2.81274
+            [2019-04-02 22:42:52.380] [debug] [planPath] --- --- --- --- ---
+            [2019-04-02 22:42:52.432] [debug] [planPath] EgoCar: x=1883.64, y=1148.07, s=1109.63, d=5.59499
+            [2019-04-02 22:42:52.432] [debug] [planPath] XY Kinematics: vx=15.641, ax=27.7992, vy=3.30307, ay=-15.0491
+            [2019-04-02 22:42:52.432] [debug] [planPath] --- --- --- --- ---
+            [2019-04-02 22:42:52.484] [debug] [planPath] EgoCar: x=1884.56, y=1148.28, s=1110.58, d=5.59072
+            [2019-04-02 22:42:52.484] [debug] [planPath] XY Kinematics: vx=16.9113, ax=24.0427, vy=2.61773, ay=-12.9423
+            [2019-04-02 22:42:52.484] [debug] [planPath] --- --- --- --- ---
+            [2019-04-02 22:42:52.544] [debug] [planPath] EgoCar: x=1885.69, y=1148.37, s=1111.7, d=5.74636
+            [2019-04-02 22:42:52.544] [debug] [planPath] XY Kinematics: vx=18.0015, ax=20.5281, vy=2.03338, ay=-10.9724
+     *
+     */
+
+    // At any rate, it seems to happen mostly when the car attempts to turn at high speed. Need to reduce speed on turns.
 }
 
 void PathPlanner::updateTrajectoryHistory(const SimulatorResponseData& simulatorData)
@@ -144,7 +181,7 @@ void PathPlanner::updateTrajectoryHistory(const SimulatorResponseData& simulator
         m_trajectoryHistoryY.resize(TRAJECTORY_HISTORY_LENGTH);
     }
 
-    spdlog::trace("XY history queue size is now ({}, {})", m_trajectoryHistoryX.size(), m_trajectoryHistoryY.size());
+    spdlog::trace("[updateTrajectoryHistory] XY history queue size is now ({}, {})", m_trajectoryHistoryX.size(), m_trajectoryHistoryY.size());
 }
 
 std::pair<std::vector<double>, std::vector<double>> PathPlanner::genPath(
@@ -182,7 +219,7 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::genPath(
     return std::make_pair(xTrajectory, yTrajectory);
 }
 
-// TODO: does not recover the orgininal coordinates if xy are passed in
+// TODO: I don't know why, but it does not recover the orgininal coordinates if xy are passed in, even without modifications
 // std::pair<std::vector<double>, std::vector<double>> PathPlanner::smoothenPath(
 //     const double currentHeading, std::vector<double> xPath, std::vector<double> yPath, const double smoothingStrength)
 // {
@@ -259,7 +296,7 @@ Kinematics PathPlanner::computeXyKinematics()
 {
     if (m_trajectoryHistoryX.size() < 4)
     {
-        // Just started
+        // Just started. The history will fill up on later ticks.
 
         // Need at least 2 for velocity, 3 for accelearation
         // and 1 extra to all for previous state when computing heading for getFrenet
@@ -279,6 +316,48 @@ Kinematics PathPlanner::computeXyKinematics()
     double yAcceleration = (yVelocity1 - yVelocity2) / NODE_TRAVERSAL_RATE_SECONDS;
 
     return { xVelocity1, xAcceleration, yVelocity1, yAcceleration };
+}
+
+Kinematics PathPlanner::computeXyKinematicsAvg()
+{
+    std:assert(m_trajectoryHistoryX.size() == m_trajectoryHistoryY.size());
+    const auto historySize = m_trajectoryHistoryX.size();
+
+    if (historySize < 4)
+    {
+        // Just started. The history will fill up on later ticks.
+
+        // Need at least 2 for velocity, 3 for accelearation
+        // and 1 extra to all for previous state when computing heading for getFrenet
+
+        return Kinematics {};
+    }
+
+    std::vector<double> xVelocities(historySize - 1);
+    std::vector<double> yVelocities(historySize - 1);
+    std::vector<double> xAccelerations(historySize - 2);
+    std::vector<double> yAccelerations(historySize - 2);
+
+    auto xHistIter = m_trajectoryHistoryX.begin();
+    auto yHistIter = m_trajectoryHistoryY.begin();
+    for (int i = 0; i < historySize - 1; ++i)
+    {
+        xVelocities[i] = (*(xHistIter + i) - *(xHistIter + i + 1)) / NODE_TRAVERSAL_RATE_SECONDS;
+        yVelocities[i] = (*(yHistIter + i) - *(yHistIter + i + 1)) / NODE_TRAVERSAL_RATE_SECONDS;
+    }
+
+    for (int i = 0; i < historySize - 2; ++i)
+    {
+        xAccelerations[i] = (xVelocities[i] - xVelocities[i+1]) / NODE_TRAVERSAL_RATE_SECONDS;
+        yAccelerations[i] = (yVelocities[i] - yVelocities[i+1]) / NODE_TRAVERSAL_RATE_SECONDS;
+    }
+
+    double meanVelocityX = std::accumulate(xVelocities.begin(), xVelocities.end(), 0.0) / xVelocities.size();
+    double meanVelocityY = std::accumulate(yVelocities.begin(), yVelocities.end(), 0.0) / yVelocities.size();
+    double meanAccelerationX = std::accumulate(xAccelerations.begin(), xAccelerations.end(), 0.0) / xAccelerations.size();
+    double meanAccelerationY = std::accumulate(yAccelerations.begin(), yAccelerations.end(), 0.0) / yAccelerations.size();
+
+    return { meanVelocityX, meanAccelerationX, meanVelocityY, meanAccelerationY };
 }
 
 int PathPlanner::getCarAhead(const EgoCar& egoCar, const std::vector<OtherCar>& otherCars) const

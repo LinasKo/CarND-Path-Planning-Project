@@ -61,15 +61,32 @@ namespace path_planning
         // std::pair<std::vector<double>, std::vector<double>> smoothenPath(
         //     const double currentHeading, std::vector<double> xPath, std::vector<double> yPath, const double smoothingStrength);
 
+        // /*
+        //  * As the smoothing function does not work, this is intended to be used to smoothen the path.
+        //  *
+        //  * Generate a XY trajectory for a path, that minimizes jerk in s and d values, but ignores x and y.
+        //  * This results in
+        //  */
+        // std::pair<std::vector<double>, std::vector<double>> genPath(
+        //     const EgoCar& egoCar, const Kinematics& xyKinematics, const double maxLaneSpeed, const std::vector<OtherCar>& otherCars);
+
         /*
          * Compute S and D velocity and acceleration of the vehicle
          */
         Kinematics computeSdKinematics();
 
         /*
-         * Compute X and Y velocity and acceleration of the vehicle
+         * Compute X and Y velocity and acceleration of the vehicle.
          */
         Kinematics computeXyKinematics();
+
+        /*
+         * Compute X and Y velocity and acceleration of the vehicle.
+         * Uses the whole available pose history to find average velocity and acceleration.
+         *
+         * NOTE: Just doesn't seem to be working, as it relies on the previous state too much.
+         */
+        Kinematics computeXyKinematicsAvg();
 
         /*
         * Returns the index of vehicle in front and -1 otherwise.
