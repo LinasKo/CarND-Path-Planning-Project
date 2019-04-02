@@ -31,16 +31,17 @@ static constexpr double MPH_TO_METRES_PER_SECOND(const double mph)  // Conversio
 }
 
 static constexpr double SPEED_LIMIT_METRES_PER_SECOND = MPH_TO_METRES_PER_SECOND(50.0 * 0.9);  // Speed limit
-static constexpr double MAX_ACCELERATION = 10.0 * 0.5; // Maximum allowed acceleration of the vehicle.
+static constexpr double MAX_ACCELERATION = 10.0 * 0.5;  // Maximum allowed acceleration of the vehicle.
 // The previous values are difficult to hard-cap when min-jerk trajectories are generated and total duration of path traversal is provided.
 // Therefore, reducing by a ratio, determined by trial-and-error.
+static constexpr double MAX_VELOCITY_CHANGE = 3.0;  // Dampen velocity change passed to the polynomial trajectory generator if it's greater than this.
 
 static constexpr unsigned TRAJECTORY_HISTORY_LENGTH = 5u; // How many nodes from a trajectory to keep in history
 static_assert(TRAJECTORY_HISTORY_LENGTH >= 4);  // Need at least this many to compute kinematics
 
 static constexpr double LANE_SPEED_FORWARD_SCAN_RANGE = SPEED_LIMIT_METRES_PER_SECOND * 3.0;  // How far ahead to look for another vehicle when determining lane speeds
-static constexpr double LANE_SPEED_BACKWARD_SCAN_RANGE = SPEED_LIMIT_METRES_PER_SECOND * 0.25;  // How far behind to look for another vehicle when determining lane speeds
-static constexpr double LANE_CHANGE_CLEAR = SPEED_LIMIT_METRES_PER_SECOND * 0.25;  // How far behind and ahead to look into other lanes to see if another vehicle is blocking a lane change
+// static constexpr double LANE_SPEED_BACKWARD_SCAN_RANGE = SPEED_LIMIT_METRES_PER_SECOND * 0.25;  // How far behind to look for another vehicle when determining lane speeds
+static constexpr double LANE_CHANGE_CLEAR = SPEED_LIMIT_METRES_PER_SECOND * 0.5;  // How far behind and ahead to look into other lanes to see if another vehicle is blocking a lane change
 
 static constexpr unsigned int LANE_CHANGE_PENALTY = 5u;  // How many ticks to prevent the vehicle from changing lanes after doing so, or when distance to desired lane is too great
 static constexpr double D_LIMIT_FOR_LANE_CHANGE_PENALTY = 0.5;  // What's the maximum allowed d distance to a lane before a lange change penalty is imposed
@@ -124,7 +125,7 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::planPath(const 
     spdlog::debug("[planPath] --- --- --- --- ---");
     return xySmooth;
 
-    // TODO: looking at the logs, it seems thatm aybe when the car goes out of control, it is because the d value cannot stabilize at the lane centre and just fluctuates wildly, affecting velocity / acceleration.
+    // TODO: looking at the logs, it seems that maybe when the car goes out of control, it is because the d value cannot stabilize at the lane centre and just fluctuates wildly, affecting velocity / acceleration.
     /*
      * At the same time, it actually doesn't look like that, so I don't know what to think. The car can just spin out of control out of the blue, while going straight. Maybe I should watch the tail of the planned trajectory.
      *
@@ -150,6 +151,21 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::planPath(const 
             [2019-04-02 22:42:52.484] [debug] [planPath] --- --- --- --- ---
             [2019-04-02 22:42:52.544] [debug] [planPath] EgoCar: x=1885.69, y=1148.37, s=1111.7, d=5.74636
             [2019-04-02 22:42:52.544] [debug] [planPath] XY Kinematics: vx=18.0015, ax=20.5281, vy=2.03338, ay=-10.9724
+
+
+     * Note that the example below might indicate that acceleration change is a problem after all.
+
+            [2019-04-02 23:23:56.372] [debug] [genPath] Changes in velocity along (x, y): (-1.67965, -0.574535)
+            [2019-04-02 23:23:56.372] [debug] [genPath] Changes in acceleration along (x, y): (-4.46693, -1.86165)
+            [2019-04-02 23:23:56.372] [debug] [planPath] --- --- --- --- ---
+            [2019-04-02 23:23:56.424] [debug] [genPath] Changes in velocity along (x, y): (-1.87153, -0.655511)
+            [2019-04-02 23:23:56.424] [debug] [genPath] Changes in acceleration along (x, y): (-3.47994, -1.48188)
+            [2019-04-02 23:23:56.424] [debug] [planPath] --- --- --- --- ---
+            [2019-04-02 23:23:56.476] [debug] [genPath] Changes in velocity along (x, y): (-1.96517, -0.695891)
+            [2019-04-02 23:23:56.476] [debug] [genPath] Changes in acceleration along (x, y): (-46.3932, -16.0834)
+            [2019-04-02 23:23:56.476] [debug] [planPath] --- --- --- --- ---
+            [2019-04-02 23:23:56.532] [debug] [genPath] Changes in velocity along (x, y): (-4.06455, -1.42413)
+            [2019-04-02 23:23:56.532] [debug] [genPath] Changes in acceleration along (x, y): (-39.4798, -13.7004)
      *
      */
 
@@ -192,8 +208,8 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::genPath(
     double maxSpeed = std::min(maxLaneSpeed, MPH_TO_METRES_PER_SECOND(egoCar.speed) + MAX_ACCELERATION);
 
     // Estimate target S point, as well as xy speed vector
-    const double nextS = egoCar.s + maxSpeed * PATH_DURATION_SECONDS;
-    const double auxS = nextS - 0.01;
+    double nextS = egoCar.s + maxSpeed * PATH_DURATION_SECONDS;
+    double auxS = nextS - 0.01;
 
     double nextX, nextY;
     std::tie(nextX, nextY) = getXY(nextS, m_currentLaneD, m_waypoints);
@@ -203,6 +219,34 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::genPath(
 
     double velocityProportionX = (nextX - auxX) / distance(nextX, nextY, auxX, auxY);
     double velocityProportionY = (nextY - auxY) / distance(nextX, nextY, auxX, auxY);
+
+    // Attempting to tackle vehicle going out of control by reducing max speed when velocity direction is changing
+    spdlog::debug("[genPath] Changes in velocity along (x, y): ({}, {})", maxSpeed * velocityProportionX - xyKinematics.velocity0, maxSpeed * velocityProportionY - xyKinematics.velocity1);
+    spdlog::debug("[genPath] Changes in acceleration along (x, y): ({}, {})", -xyKinematics.acceleration0, -xyKinematics.acceleration1);
+    double velocityDampenRatio = 1.0;
+    double xVelocityChange = maxSpeed * velocityProportionX - xyKinematics.velocity0;
+    double yVelocityChange = maxSpeed * velocityProportionY - xyKinematics.velocity1;
+    const double velocityChange = std::abs(xVelocityChange) + std::abs(yVelocityChange);
+    if (velocityChange != 0 && velocityChange > MAX_VELOCITY_CHANGE)
+    {
+        velocityDampenRatio = MAX_VELOCITY_CHANGE / velocityChange;
+
+        if (velocityDampenRatio != 1.0)
+        {
+            // Recompute target
+            double nextS = egoCar.s + maxSpeed * PATH_DURATION_SECONDS * velocityDampenRatio;
+            double auxS = nextS - 0.01;
+
+            double nextX, nextY;
+            std::tie(nextX, nextY) = getXY(nextS, m_currentLaneD, m_waypoints);
+
+            double auxX, auxY;
+            std::tie(auxX, auxY) = getXY(auxS, m_currentLaneD, m_waypoints);
+
+            double velocityProportionX = (nextX - auxX) / distance(nextX, nextY, auxX, auxY);
+            double velocityProportionY = (nextY - auxY) / distance(nextX, nextY, auxX, auxY);
+        }
+    }
 
     // Generate trajectories
     const std::array<double, 6> xParams = polynomialTrajectoryParameters(PATH_DURATION_SECONDS,
