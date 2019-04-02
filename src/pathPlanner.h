@@ -50,8 +50,16 @@ namespace path_planning
          * Generate a XY trajectory for a path, covering both straight-line movements, and lane changing activities
          */
         std::pair<std::vector<double>, std::vector<double>> genPath(
-            const EgoCar& egoCar, const Kinematics& xyKinematics, const std::vector<OtherCar>& otherCars);
+            const EgoCar& egoCar, const Kinematics& xyKinematics, const double maxLaneSpeed, const std::vector<OtherCar>& otherCars);
 
+        // TODO: does not recover the orgininal coordinates if xy are passed in
+        // /*
+        //  * Smoothens the path, bringing it closer to the center of the lane, at potential cost of increased jerk and acceleration
+        //  *
+        //  * Assumes that path stretches outwards from the current pose.
+        //  */
+        // std::pair<std::vector<double>, std::vector<double>> smoothenPath(
+        //     const double currentHeading, std::vector<double> xPath, std::vector<double> yPath, const double smoothingStrength);
 
         /*
          * Compute S and D velocity and acceleration of the vehicle
@@ -67,6 +75,16 @@ namespace path_planning
         * Returns the index of vehicle in front and -1 otherwise.
         */
         int getCarAhead(const EgoCar& egoCar, const std::vector<OtherCar>& otherCars) const;
+
+        /*
+        * Returns the index of vehicle behind, and -1 otherwise.
+        */
+        int getCarBehind(const EgoCar& egoCar, const std::vector<OtherCar>& otherCars) const;
+
+        /*
+         * Checks if the given lane has a vehicle that is blocking lane changes.
+         */
+        bool isLaneBlocked(const int targetLaneIndex, const EgoCar& egoCar, const std::vector<OtherCar>& otherCars) const;
 
         /*
          * Get estimated speeds in each lane.
@@ -96,6 +114,8 @@ namespace path_planning
         std::vector<double> m_prevSentTrajectoryX, m_prevSentTrajectoryY;
         std::deque<double> m_trajectoryHistoryX, m_trajectoryHistoryY;
         double m_currentLaneD { D_MIDDLE_LANE };
+        int m_currentLaneIndex { 1 };  // TODO: should be merged with m_currentLaneIndex
+        unsigned int m_laneChangeDelay { 5u };  // Prevent changing lanes for this many time steps
     };
 }
 

@@ -19,24 +19,30 @@
 
 using namespace path_planning;
 
-static constexpr double LANE_CHANGE_COST = 1.0;  // penalty to speed when deciding whether to change to a faster lane
+static constexpr double LANE_CHANGE_COST = 1.0;  // Penalty to speed when deciding whether to change to a faster lane
 
-static constexpr double KEEP_LANE_DURATION_SECONDS = 2.5;
-static constexpr double CHANGE_LANE_DURATION_SECONDS = 5.0;
-static constexpr double NODE_TRAVERSAL_RATE_SECONDS = 0.02;
+static constexpr double PATH_DURATION_SECONDS = 2.5;  // How long should the traversal of the generated path take
+static constexpr double NODE_TRAVERSAL_RATE_SECONDS = 0.02;  // How much time passes in the simulation between each node of the given path
 
-static constexpr double SAFETY_DISTANCE_TO_OTHER_CAR = 5.0;
-static constexpr double MPH_TO_METRES_PER_SECOND(const double mph)
+static constexpr double MPH_TO_METRES_PER_SECOND(const double mph)  // Conversion from MPH to units in the simulator (metres per second)
 {
     return mph / 3600.0 * 1609.344;
 }
-static constexpr double SPEED_LIMIT_METRES_PER_SECOND = MPH_TO_METRES_PER_SECOND(50.0 * 0.9);  // Simulator coordinates == metres.
-static constexpr double MAX_ACCELERATION = 10.0 * 0.5;
 
-static constexpr unsigned TRAJECTORY_HISTORY_LENGTH = 5u;
-static_assert(TRAJECTORY_HISTORY_LENGTH >= 4);
+static constexpr double SPEED_LIMIT_METRES_PER_SECOND = MPH_TO_METRES_PER_SECOND(50.0 * 0.9);  // Speed limit
+static constexpr double MAX_ACCELERATION = 10.0 * 0.5; // Maximum allowed acceleration of the vehicle.
+// The previous values are difficult to hard-cap when min-jerk trajectories are generated and total duration of path traversal is provided.
+// Therefore, reducing by a ratio, determined by trial-and-error.
 
-static constexpr double LANE_SPEED_FORWARD_SCAN_RANGE = SPEED_LIMIT_METRES_PER_SECOND * 3.0;
+static constexpr unsigned TRAJECTORY_HISTORY_LENGTH = 5u; // How many nodes from a trajectory to keep in history
+static_assert(TRAJECTORY_HISTORY_LENGTH >= 4);  // Need at least this many to compute kinematics
+
+static constexpr double LANE_SPEED_FORWARD_SCAN_RANGE = SPEED_LIMIT_METRES_PER_SECOND * 3.0;  // How far ahead to look for another vehicle when determining lane speeds
+static constexpr double LANE_SPEED_BACKWARD_SCAN_RANGE = SPEED_LIMIT_METRES_PER_SECOND * 0.25;  // How far behind to look for another vehicle when determining lane speeds
+static constexpr double LANE_CHANGE_CLEAR = SPEED_LIMIT_METRES_PER_SECOND * 0.25;  // How far behind and ahead to look into other lanes to see if another vehicle is blocking a lane change
+
+static constexpr unsigned int LANE_CHANGE_PENALTY = 5u;  // How many ticks to prevent the vehicle from changing lanes after doing so, or when distance to desired lane is too great
+static constexpr double D_LIMIT_FOR_LANE_CHANGE_PENALTY = 0.5;  // What's the maximum allowed d distance to a lane before a lange change penalty is imposed
 
 
 PathPlanner::PathPlanner(std::vector<Waypoint> waypoints) :
@@ -53,35 +59,64 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::planPath(const 
     const std::array<double, 3> laneSpeeds = getLaneSpeeds(simulatorData.egoCar, simulatorData.otherCars);
     spdlog::trace("[planPath] Lane Speeds: {}, {}, {}", laneSpeeds[0], laneSpeeds[1], laneSpeeds[2]);
 
-    if (m_currentLaneD == D_LEFT_LANE && laneSpeeds[1] - LANE_CHANGE_COST > laneSpeeds[0])
+    // Keep a counter that attempts to track when a car has completed a lane change manoeuvre
+    // Side effect of low penalty tolerance: no overtaking on the curved road :)
+    if (std::abs(simulatorData.egoCar.d - m_currentLaneD) > D_LIMIT_FOR_LANE_CHANGE_PENALTY)
     {
-        spdlog::info("[planPath] Changing to middle lane.");
-        m_currentLaneD = D_MIDDLE_LANE;
+        m_laneChangeDelay = LANE_CHANGE_PENALTY;
+        spdlog::trace("Applied lane change penalty for d distance of {}.", std::abs(simulatorData.egoCar.d - m_currentLaneD));
     }
-    else if (m_currentLaneD == D_RIGHT_LANE && laneSpeeds[1] - LANE_CHANGE_COST > laneSpeeds[2])
+    else if (m_laneChangeDelay != 0)
     {
-        spdlog::info("[planPath] Changing to middle lane.");
-        m_currentLaneD = D_MIDDLE_LANE;
+        --m_laneChangeDelay;
+        spdlog::trace("Remaining lane change penalty: {}", m_laneChangeDelay);
     }
-    else if (m_currentLaneD == D_MIDDLE_LANE && (laneSpeeds[0] - LANE_CHANGE_COST > laneSpeeds[1] || laneSpeeds[2] - LANE_CHANGE_COST > laneSpeeds[1]))
+    else
     {
-        if (laneSpeeds[0] > laneSpeeds[2])
+        // Allow lane change
+        if (m_currentLaneD == D_LEFT_LANE && laneSpeeds[1] - LANE_CHANGE_COST > laneSpeeds[0] && not isLaneBlocked(1, simulatorData.egoCar, simulatorData.otherCars))
         {
-            spdlog::info("[planPath] Changing to left lane.");
-            m_currentLaneD = D_LEFT_LANE;
+            spdlog::info("[planPath] Changing to middle lane.");
+            m_currentLaneD = D_MIDDLE_LANE;
+            m_currentLaneIndex = 1;
+            m_laneChangeDelay = LANE_CHANGE_PENALTY;
         }
-        else
+        else if (m_currentLaneD == D_RIGHT_LANE && laneSpeeds[1] - LANE_CHANGE_COST > laneSpeeds[2] && not isLaneBlocked(1, simulatorData.egoCar, simulatorData.otherCars))
         {
-            spdlog::info("[planPath] Changing to right lane.");
-            m_currentLaneD = D_RIGHT_LANE;
+            spdlog::info("[planPath] Changing to middle lane.");
+            m_currentLaneD = D_MIDDLE_LANE;
+            m_currentLaneIndex = 1;
+            m_laneChangeDelay = LANE_CHANGE_PENALTY;
+        }
+        else if (m_currentLaneD == D_MIDDLE_LANE && (laneSpeeds[0] - LANE_CHANGE_COST > laneSpeeds[1] || laneSpeeds[2] - LANE_CHANGE_COST > laneSpeeds[1]))
+        {
+            if (laneSpeeds[0] > laneSpeeds[2] && not isLaneBlocked(0, simulatorData.egoCar, simulatorData.otherCars))
+            {
+                spdlog::info("[planPath] Changing to left lane.");
+                m_currentLaneD = D_LEFT_LANE;
+                m_currentLaneIndex = 0;
+                m_laneChangeDelay = LANE_CHANGE_PENALTY;
+            }
+            else if (not isLaneBlocked(2, simulatorData.egoCar, simulatorData.otherCars))
+            {
+                spdlog::info("[planPath] Changing to right lane.");
+                m_currentLaneD = D_RIGHT_LANE;
+                m_currentLaneIndex = 2;
+                m_laneChangeDelay = LANE_CHANGE_PENALTY;
+            }
         }
     }
 
-    std::pair<std::vector<double>, std::vector<double>> xyTrajectory = genPath(simulatorData.egoCar, kinematics, simulatorData.otherCars);
+    std::pair<std::vector<double>, std::vector<double>> xyTrajectory = genPath(simulatorData.egoCar, kinematics, laneSpeeds[m_currentLaneIndex], simulatorData.otherCars);
 
-    m_prevSentTrajectoryX = xyTrajectory.first;
-    m_prevSentTrajectoryY = xyTrajectory.second;
-    return xyTrajectory;
+    // Bring path closer to center of lane
+    // std::pair<std::vector<double>, std::vector<double>> xySmooth = smoothenPath(simulatorData.egoCar.yaw, xyTrajectory.first, xyTrajectory.second, 0.0);
+    auto xySmooth = xyTrajectory;
+    spdlog::trace("[planPath] Lengths of smoothened path: {}, {}", xySmooth.first.size(), xySmooth.second.size());
+
+    m_prevSentTrajectoryX = xySmooth.first;
+    m_prevSentTrajectoryY = xySmooth.second;
+    return xySmooth;
 }
 
 void PathPlanner::updateTrajectoryHistory(const SimulatorResponseData& simulatorData)
@@ -113,14 +148,14 @@ void PathPlanner::updateTrajectoryHistory(const SimulatorResponseData& simulator
 }
 
 std::pair<std::vector<double>, std::vector<double>> PathPlanner::genPath(
-    const EgoCar& egoCar, const Kinematics& xyKinematics, const std::vector<OtherCar>& otherCars)
+    const EgoCar& egoCar, const Kinematics& xyKinematics, const double maxLaneSpeed, const std::vector<OtherCar>& otherCars)
 {
     // Account for max acceleration
-    spdlog::trace("[genPath] EgoCar speed: {}", MPH_TO_METRES_PER_SECOND(egoCar.speed));
-    double maxSpeed = std::min(SPEED_LIMIT_METRES_PER_SECOND, MPH_TO_METRES_PER_SECOND(egoCar.speed) + MAX_ACCELERATION);
+    spdlog::trace("[genPath] EgoCar speed, max lane speed: {}, {}", MPH_TO_METRES_PER_SECOND(egoCar.speed), maxLaneSpeed);
+    double maxSpeed = std::min(maxLaneSpeed, MPH_TO_METRES_PER_SECOND(egoCar.speed) + MAX_ACCELERATION);
 
     // Estimate target S point, as well as xy speed vector
-    const double nextS = egoCar.s + maxSpeed * KEEP_LANE_DURATION_SECONDS;
+    const double nextS = egoCar.s + maxSpeed * PATH_DURATION_SECONDS;
     const double auxS = nextS - 0.01;
 
     double nextX, nextY;
@@ -133,19 +168,55 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::genPath(
     double velocityProportionY = (nextY - auxY) / distance(nextX, nextY, auxX, auxY);
 
     // Generate trajectories
-    const std::array<double, 6> xParams = polynomialTrajectoryParameters(KEEP_LANE_DURATION_SECONDS,
+    const std::array<double, 6> xParams = polynomialTrajectoryParameters(PATH_DURATION_SECONDS,
         egoCar.x, xyKinematics.velocity0, xyKinematics.acceleration0,
         nextX, maxSpeed * velocityProportionX, 0.0);
 
-    const std::array<double, 6> yParams = polynomialTrajectoryParameters(KEEP_LANE_DURATION_SECONDS,
+    const std::array<double, 6> yParams = polynomialTrajectoryParameters(PATH_DURATION_SECONDS,
         egoCar.y, xyKinematics.velocity1, xyKinematics.acceleration1,
         nextY, maxSpeed * velocityProportionY, 0.0);
 
-    std::vector<double> xTrajectory = generateTrajectoryFromParams(KEEP_LANE_DURATION_SECONDS, NODE_TRAVERSAL_RATE_SECONDS, xParams);
-    std::vector<double> yTrajectory = generateTrajectoryFromParams(KEEP_LANE_DURATION_SECONDS, NODE_TRAVERSAL_RATE_SECONDS, yParams);
+    std::vector<double> xTrajectory = generateTrajectoryFromParams(PATH_DURATION_SECONDS, NODE_TRAVERSAL_RATE_SECONDS, xParams);
+    std::vector<double> yTrajectory = generateTrajectoryFromParams(PATH_DURATION_SECONDS, NODE_TRAVERSAL_RATE_SECONDS, yParams);
 
     return std::make_pair(xTrajectory, yTrajectory);
 }
+
+// TODO: does not recover the orgininal coordinates if xy are passed in
+// std::pair<std::vector<double>, std::vector<double>> PathPlanner::smoothenPath(
+//     const double currentHeading, std::vector<double> xPath, std::vector<double> yPath, const double smoothingStrength)
+// {
+//     assert(xPath.size() == yPath.size());
+//     assert(smoothingStrength >= 0.0 && smoothingStrength <= 1.0);
+
+//     for (auto i = 1; i < xPath.size(); ++i)
+//     {
+//         double s, d;
+//         if (i == 0)
+//         {
+//             std::tie(s, d) = getFrenet(xPath[i], yPath[i], currentHeading, m_waypoints);
+//         }
+//         else
+//         {
+//             std::tie(s, d) = getFrenet(xPath[i], yPath[i], orientation(yPath[i] - yPath[i-1], xPath[i] - xPath[i-1]), m_waypoints);
+//         }
+
+//         // Smoothen
+//         // double distToLaneCenter = m_currentLaneD - d;
+//         // d += distToLaneCenter * smoothingStrength;
+
+//         double newX, newY;
+//         std::tie(newX, newY) = getXY(s, d, m_waypoints);
+
+//         spdlog::debug("[smoothenPath] xy before: ({}, {})", xPath[i], yPath[i]);
+//         spdlog::debug("[smoothenPath] xy after:  ({}, {})", newX, newY);
+
+//         xPath[i] = newX;
+//         yPath[i] = newY;
+//     }
+
+//     return std::make_pair(xPath, yPath);
+// }
 
 Kinematics PathPlanner::computeSdKinematics()
 {
@@ -234,6 +305,43 @@ int PathPlanner::getCarAhead(const EgoCar& egoCar, const std::vector<OtherCar>& 
     return carAheadIndex;
 }
 
+int PathPlanner::getCarBehind(const EgoCar& egoCar, const std::vector<OtherCar>& otherCars) const
+{
+    int carBehindIndex = -1;
+    double minSDist = std::numeric_limits<double>::max();
+
+    for (int i = 0; i < otherCars.size(); ++i)
+    {
+        const OtherCar& otherCar = otherCars[i];
+
+        // TODO: does not account for wrap-around in S
+        if (std::abs(otherCar.d - egoCar.d) < 1.0 and otherCar.s < egoCar.s)
+        {
+            double sDist = egoCar.s - otherCar.s;
+            if (sDist < minSDist)
+            {
+                minSDist = sDist;
+                carBehindIndex = i;
+            }
+        }
+    }
+
+    return carBehindIndex;
+}
+
+bool PathPlanner::isLaneBlocked(const int targetLaneIndex, const EgoCar& egoCar, const std::vector<OtherCar>& otherCars) const
+{
+    for (const auto& otherCar : otherCars)
+    {
+        // TODO: address S wraparound
+        if (std::abs(otherCar.d - egoCar.d) < 1.0 && std::abs(otherCar.s - egoCar.s) <= LANE_CHANGE_CLEAR)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::array<double, 3> PathPlanner::getLaneSpeeds(EgoCar egoCar, const std::vector<OtherCar>& otherCars) const
 {
     std::array<double, 3> speeds;
@@ -243,21 +351,25 @@ std::array<double, 3> PathPlanner::getLaneSpeeds(EgoCar egoCar, const std::vecto
     {
         egoCar.d = lanes[i];
         int carAheadIndex = getCarAhead(egoCar, otherCars);
+        int carBehindIndex = getCarBehind(egoCar, otherCars);
         spdlog::trace("[getLaneSpeeds] Car ahead: {}", carAheadIndex);
 
-        if (carAheadIndex == -1)
-        {
-            speeds[i] = SPEED_LIMIT_METRES_PER_SECOND;
-        }
-        else if (otherCars[carAheadIndex].s - egoCar.s > LANE_SPEED_FORWARD_SCAN_RANGE)
-        {
-            speeds[i] = SPEED_LIMIT_METRES_PER_SECOND;
-        }
-        else
+        double carAheadSpeed = SPEED_LIMIT_METRES_PER_SECOND;
+        double carBehindSpeed = SPEED_LIMIT_METRES_PER_SECOND;
+
+        if (carAheadIndex != -1 && otherCars[carAheadIndex].s - egoCar.s <= LANE_SPEED_FORWARD_SCAN_RANGE)
         {
             const auto& carAhead = otherCars[carAheadIndex];
-            speeds[i] = std::sqrt(carAhead.dx * carAhead.dx + carAhead.dy * carAhead.dy);
+            carAheadSpeed = std::sqrt(carAhead.dx * carAhead.dx + carAhead.dy * carAhead.dy);
         }
+        // if (carBehindIndex != -1 && egoCar.s - otherCars[carBehindIndex].s <= LANE_SPEED_BACKWARD_SCAN_RANGE)
+        // {
+        //     // TODO: simply prevent lane change?
+        //     const auto& carBehind = otherCars[carBehindIndex];
+        //     carBehindSpeed = std::sqrt(carBehind.dx * carBehind.dx + carBehind.dy * carBehind.dy);
+        // }
+
+        speeds[i] = std::min(carAheadSpeed, carBehindSpeed);
     }
 
     return speeds;
