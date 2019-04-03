@@ -95,19 +95,19 @@ namespace path_planning
         double nX = nextWp.x - prevWp.x;
         double nY = nextWp.y - prevWp.y;
         double xX = x - prevWp.x;
-        double yY = y - prevWp.y;
+        double xY = y - prevWp.y;
 
         // find the projection of x onto n
-        double proj_norm = (xX * nX + yY * nY) / (nX * nX + nY * nY);
+        double proj_norm = (xX * nX + xY * nY) / (nX * nX + nY * nY);
         double projX = proj_norm * nX;
         double projY = proj_norm * nY;
 
-        double frenetD = distance(xX, yY, projX, projY);
+        double frenetD = distance(xX, xY, projX, projY);
 
         //see if d value is positive or negative by comparing it to a center point
         double centerX = MAP_CENTER_X - prevWp.x;
         double centerY = MAP_CENTER_Y - prevWp.y;
-        double centerToPos = distance(centerX, centerY, xX, yY);
+        double centerToPos = distance(centerX, centerY, xX, xY);
         double centerToRef = distance(centerX, centerY, projX, projY);
 
         if (centerToPos <= centerToRef)
@@ -125,6 +125,37 @@ namespace path_planning
         frenetS += distance(0, 0, projX, projY);
 
         return std::make_pair(frenetS, frenetD);
+    }
+
+    /*
+     * Get the frenet coordinates of every element in an XY path
+     */
+    std::pair<std::vector<double>, std::vector<double>> getFrenet(std::vector<double> xPath, std::vector<double> yPath, const std::vector<Waypoint>& waypoints)
+    {
+        assert(xPath.size() == yPath.size());
+        const auto pathSize = xPath.size();
+
+        std::vector<double> sPath(pathSize), dPath(pathSize);
+        double s, d;
+        double heading0;
+        for (auto i = 1; i < pathSize; ++i)
+        {
+            double heading = std::atan2(yPath[i] - yPath[i-1], xPath[i] - xPath[i-1]);
+            if (i == 1)
+            {
+                heading0 = heading;
+            }
+
+            std::tie(s, d) = getFrenet(xPath[i], yPath[i], heading, waypoints);
+            sPath[i] = s;
+            dPath[i] = d;
+        }
+
+        std::tie(s, d) = getFrenet(xPath[0], yPath[0], heading0, waypoints);
+        sPath[0] = s;
+        dPath[0] = d;
+
+        return std::make_pair(sPath, dPath);
     }
 
     /*
@@ -155,6 +186,26 @@ namespace path_planning
         double y = segY + d * sin(perpHeading);
 
         return std::make_pair(x, y);
+    }
+
+    /*
+     * Get the XY coordinates of every element in a Frenet path
+     */
+    std::pair<std::vector<double>, std::vector<double>> getXY(std::vector<double> sPath, std::vector<double> dPath, const std::vector<Waypoint>& waypoints)
+    {
+        assert(sPath.size() == dPath.size());
+        const auto pathSize = sPath.size();
+
+        std::vector<double> xPath(pathSize), yPath(pathSize);
+        double x, y;
+        for (auto i = 0; i < pathSize; ++i)
+        {
+            std::tie(x, y) = getXY(sPath[i], dPath[i], waypoints);
+            xPath[i] = x;
+            yPath[i] = y;
+        }
+
+        return std::make_pair(xPath, yPath);
     }
 }
 
