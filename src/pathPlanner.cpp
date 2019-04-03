@@ -7,7 +7,6 @@
 #include <iostream>
 #include <limits>
 #include <numeric>
-#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -58,10 +57,10 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::planPath(const 
     updateTrajectoryHistory(simulatorData);
     spdlog::trace("[planPath] EgoCar: x={}, y={}, s={}, d={}", simulatorData.egoCar.x, simulatorData.egoCar.y, simulatorData.egoCar.s, simulatorData.egoCar.d);
 
-    // Kinematics kinematics = computeXyKinematics();
+    Kinematics kinematics = computeXyKinematics();
 
-    const auto usePrevious = 5;
-    Kinematics kinematics = computeXyKinematicsHist(simulatorData.prevPathX, simulatorData.prevPathY, usePrevious);
+    // const auto usePrevious = 5;
+    // Kinematics kinematics = computeXyKinematicsHist(simulatorData.prevPathX, simulatorData.prevPathY, usePrevious);
     spdlog::trace("[planPath] XY Kinematics: vx={}, ax={}, vy={}, ay={}", kinematics.velocity0, kinematics.acceleration0, kinematics.velocity1, kinematics.acceleration1);
     spdlog::trace("[planPath] Reported car speed vs kinematics dx, dy: {} vs ({}, {})", MPH_TO_METRES_PER_SECOND(simulatorData.egoCar.speed), kinematics.velocity0, kinematics.velocity1);
 
@@ -116,8 +115,15 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::planPath(const 
         }
     }
 
-    std::pair<std::vector<double>, std::vector<double>> xyTrajectory = genPathWithPast(
-        simulatorData.egoCar, kinematics, simulatorData.prevPathX, simulatorData.prevPathY, laneSpeeds[m_currentLaneIndex], simulatorData.otherCars, usePrevious);
+    std::pair<std::vector<double>, std::vector<double>> xyTrajectory = genPath(simulatorData.egoCar, kinematics, laneSpeeds[m_currentLaneIndex], simulatorData.otherCars);
+
+    double nextX, nextY, carX, carY, checkX, checkY;
+    nextX = xyTrajectory.first[25];
+    nextY = xyTrajectory.second[25];
+    std::tie(carX, carY) = worldCoordToCarCoord(simulatorData.egoCar, nextX, nextY);
+    std::tie(checkX, checkY) = carCoordToWorldCoord(simulatorData.egoCar, carX, carY);
+    spdlog::warn("[planPath] egoCar.x={}, egoCar.y={}, egoCar.yaw={}", simulatorData.egoCar.x, simulatorData.egoCar.y, simulatorData.egoCar.yaw);
+    spdlog::warn("[planPath] nextX={}, nextY={}, carX={}, carY={}, checkX={}, checkY={}", nextX, nextY, carX, carY, checkX, checkY);
 
     spdlog::debug("[planPath] --- --- --- --- ---");
     m_prevSentTrajectoryX = xyTrajectory.first;
@@ -537,4 +543,30 @@ std::vector<double> PathPlanner::generateTrajectoryFromParams(double totalTime, 
     }
 
     return results;
+}
+
+std::pair<double, double> PathPlanner::worldCoordToCarCoord(const EgoCar& egoCar, double worldX, double worldY)
+{
+    const double carYawRadians = M_PI * egoCar.yaw / 180.0;
+
+    double shiftX = worldX - egoCar.x;
+    double shiftY = worldY - egoCar.y;
+
+    double carX = shiftX * std::cos(-carYawRadians) - shiftY * std::sin(-carYawRadians);
+    double carY = shiftX * std::sin(-carYawRadians) + shiftY * std::cos(-carYawRadians);
+
+    return std::make_pair(carX, carY);
+}
+
+std::pair<double, double> PathPlanner::carCoordToWorldCoord(const EgoCar& egoCar, double carX, double carY)
+{
+    const double carYawRadians = M_PI * egoCar.yaw / 180.0;
+
+    double worldX = carX * std::cos(carYawRadians) - carY * std::sin(carYawRadians);
+    double worldY = carX * std::sin(carYawRadians) + carY * std::cos(carYawRadians);
+
+    worldX += egoCar.x;
+    worldY += egoCar.y;
+
+    return std::make_pair(worldX, worldY);
 }

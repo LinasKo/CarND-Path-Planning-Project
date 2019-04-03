@@ -113,6 +113,16 @@ namespace path_planning
         */
         static std::vector<double> generateTrajectoryFromParams(double totalTime, double timeIncrement, const std::array<double, 6>& polyParams);
 
+        /*
+        * Convert XY pose in map coordinates to car coordinates
+        */
+        static std::pair<double, double> worldCoordToCarCoord(const EgoCar& egoCar, double x, double y);
+
+        /*
+        * Convert XY pose in car coordinates to map coordinates
+        */
+        static std::pair<double, double> carCoordToWorldCoord(const EgoCar& egoCar, double x, double y);
+
         const std::vector<Waypoint> m_waypoints;
         std::vector<double> m_prevSentTrajectoryX, m_prevSentTrajectoryY;
         std::deque<double> m_trajectoryHistoryX, m_trajectoryHistoryY;
