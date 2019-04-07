@@ -15,7 +15,7 @@
 #include "spdlog/spdlog.h"
 #include "spline/spline.h"
 
-#include "helpersOld.h"
+#include "helpers.h"
 
 
 using namespace path_planning;
@@ -36,7 +36,7 @@ static constexpr double MAX_ACCELERATION = 10.0 * 0.5;  // Maximum allowed accel
 // Therefore, reducing by a ratio, determined by trial-and-error.
 static constexpr double MAX_VELOCITY_CHANGE = 3.0;  // Dampen velocity change passed to the polynomial trajectory generator if it's greater than this.
 
-static constexpr unsigned TRAJECTORY_HISTORY_LENGTH = 5u; // How many nodes from a trajectory to keep in history
+static constexpr unsigned TRAJECTORY_HISTORY_LENGTH = 100u; // How many nodes from a trajectory to keep in history
 static_assert(TRAJECTORY_HISTORY_LENGTH >= 4);  // Need at least this many to compute kinematics
 
 static constexpr double LANE_SPEED_FORWARD_SCAN_RANGE = SPEED_LIMIT_METRES_PER_SECOND * 3.0;  // How far ahead to look for another vehicle when determining lane speeds
@@ -52,9 +52,8 @@ PathPlanner::PathPlanner(std::vector<Waypoint> waypoints) :
 {}
 
 std::pair<std::vector<double>, std::vector<double>> PathPlanner::planPath(const SimulatorResponseData& simulatorData)
-
 {
-    updateTrajectoryHistory(simulatorData);
+    updateHistory(simulatorData);
     spdlog::trace("[planPath] EgoCar: x={}, y={}, s={}, d={}", simulatorData.egoCar.x, simulatorData.egoCar.y, simulatorData.egoCar.s, simulatorData.egoCar.d);
 
     Kinematics kinematics = computeXyKinematics();
@@ -121,40 +120,40 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::planPath(const 
     std::pair<std::vector<double>, std::vector<double>> xyTrajectory = genPathSpline(
         simulatorData.egoCar, laneSpeeds[m_targetLaneIndex], simulatorData.prevPathX, simulatorData.prevPathY, keepPrev);
 
-    m_prevSentTrajectoryX = xyTrajectory.first;
-    m_prevSentTrajectoryY = xyTrajectory.second;
+    m_prevSentX = xyTrajectory.first;
+    m_prevSentY = xyTrajectory.second;
 
     spdlog::debug("[planPath] ------------------------------");
 
     return xyTrajectory;
 }
 
-void PathPlanner::updateTrajectoryHistory(const SimulatorResponseData& simulatorData)
+void PathPlanner::updateHistory(const SimulatorResponseData& simulatorData)
 {
-    assert(m_prevSentTrajectoryX.size() == m_prevSentTrajectoryY.size());
+    assert(m_prevSentX.size() == m_prevSentY.size());
     assert(simulatorData.prevPathX.size() == simulatorData.prevPathY.size());
 
-    const int executedCommandsCount = m_prevSentTrajectoryX.size() - simulatorData.prevPathX.size();
+    const int executedCommandsCount = m_prevSentX.size() - simulatorData.prevPathX.size();
 
-    for (auto it = m_prevSentTrajectoryX.begin(); it != m_prevSentTrajectoryX.begin() + executedCommandsCount; ++it)
+    for (auto it = m_prevSentX.begin(); it != m_prevSentX.begin() + executedCommandsCount; ++it)
     {
-        m_trajectoryHistoryX.push_front(*it);
+        m_historyEgoX.push_front(*it);
     }
-    if (m_trajectoryHistoryX.size() > TRAJECTORY_HISTORY_LENGTH)
+    if (m_historyEgoX.size() > TRAJECTORY_HISTORY_LENGTH)
     {
-        m_trajectoryHistoryX.resize(TRAJECTORY_HISTORY_LENGTH);
-    }
-
-    for (auto it = m_prevSentTrajectoryY.begin(); it != m_prevSentTrajectoryY.begin() + executedCommandsCount; ++it)
-    {
-        m_trajectoryHistoryY.push_front(*it);
-    }
-    if (m_trajectoryHistoryY.size() > TRAJECTORY_HISTORY_LENGTH)
-    {
-        m_trajectoryHistoryY.resize(TRAJECTORY_HISTORY_LENGTH);
+        m_historyEgoX.resize(TRAJECTORY_HISTORY_LENGTH);
     }
 
-    spdlog::trace("[updateTrajectoryHistory] XY history queue size is now ({}, {})", m_trajectoryHistoryX.size(), m_trajectoryHistoryY.size());
+    for (auto it = m_prevSentY.begin(); it != m_prevSentY.begin() + executedCommandsCount; ++it)
+    {
+        m_historyEgoY.push_front(*it);
+    }
+    if (m_historyEgoY.size() > TRAJECTORY_HISTORY_LENGTH)
+    {
+        m_historyEgoY.resize(TRAJECTORY_HISTORY_LENGTH);
+    }
+
+    spdlog::trace("[updateHistory] XY history queue size is now ({}, {})", m_historyEgoX.size(), m_historyEgoY.size());
 }
 
 std::pair<std::vector<double>, std::vector<double>> PathPlanner::genPath(
@@ -284,85 +283,101 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::genPathWithPast
 std::pair<std::vector<double>, std::vector<double>> PathPlanner::genPathSpline(
     const EgoCar& egoCar, const double maxLaneSpeed, const std::vector<double>& prevPathX, const std::vector<double>& prevPathY, const unsigned keepPrevious)
 {
+    // Because of the issues in getFrenet function, I will not fully trust the frenet coordinates and will try to avoid them if I can.
+    // Still, we need them to compute the destination, so they will be used in 2 cases:
+    // 1. The initial s position of the vehicle. This does not use getFrenet, but obtains it from the simulator, with hopefully better accuracy.
+    // 2. The goal s position for the vehicle. If the coordinate is incorrect, the goal will be far enough to be corrected at a later timepoint.
+
     assert(prevPathX.size() == prevPathY.size());
     const unsigned prevAvailable = std::min((unsigned)prevPathX.size(), keepPrevious);
-
-    std::vector<double> prevPathS, prevPathD;
-    std::tie(prevPathS, prevPathD) = getFrenet(prevPathX, prevPathY, m_waypoints);
 
     std::cout << "Prev path:" << std::endl;
     std::cout << "X:  " << toString(prevPathX) << std::endl << std::endl;
     std::cout << "Y:  " << toString(prevPathY) << std::endl << std::endl;
-    std::cout << "S:  " << toString(prevPathS) << std::endl << std::endl;
-    std::cout << "D:  " << toString(prevPathD) << std::endl << std::endl;
-
-    // Compute starting point
-    double startX, startY, startS, startD, startYaw, startSpeed;
-    if (prevAvailable == 0)
-    {
-        startX = egoCar.x;
-        startY = egoCar.y;
-        startS = egoCar.s;
-        startD = egoCar.d;
-    }
-    else
-    {
-        startX = prevPathX[prevAvailable - 1];
-        startY = prevPathY[prevAvailable - 1];
-        startS = prevPathS[prevAvailable - 1];
-        startD = prevPathD[prevAvailable - 1];
-    }
-
-    if (prevAvailable <= 2)
-    {
-        startYaw = egoCar.yaw;
-        startSpeed = MPH_TO_METRES_PER_SECOND(egoCar.speed);
-    }
-    else
-    {
-        startYaw = std::atan2(prevPathY[prevAvailable - 1] - prevPathY[prevAvailable - 2], prevPathX[prevAvailable - 1] - prevPathX[prevAvailable - 2]);
-        startSpeed = (prevPathS[prevAvailable - 1] - prevPathS[prevAvailable - 2]) / NODE_TRAVERSAL_RATE_SECONDS;
-    }
 
     // Set up spline keypoints
-    spdlog::debug("[genPathSpline] maxLaneSpeed = {}, startSpeed + MAX_ACCELERATION = {}", maxLaneSpeed, startSpeed + MAX_ACCELERATION);
-    const double maxSpeed = std::min(maxLaneSpeed, startSpeed + MAX_ACCELERATION);
-    const double dDifference = m_targetLaneD - startD;
+    spdlog::debug("[genPathSpline] maxLaneSpeed = {}, startSpeed + MAX_ACCELERATION = {}", maxLaneSpeed, MPH_TO_METRES_PER_SECOND(egoCar.speed) + MAX_ACCELERATION);
+    const double maxSpeed = std::min(maxLaneSpeed, MPH_TO_METRES_PER_SECOND(egoCar.speed) + MAX_ACCELERATION);
 
-    double nextS = startS + maxSpeed * PATH_DURATION_SECONDS * 0.25;
-    double nextD = startD + dDifference * 0.25;
+    // double nextS = egoCar.s + maxSpeed * PATH_DURATION_SECONDS * 0.25;
+    // double nextD = egoCar.d + dDifference * 0.25;
 
-    double beforeEndS = startS + maxSpeed * PATH_DURATION_SECONDS * 0.75;
-    double beforeEndD = startD + dDifference * 0.75;
+    // Just because spline needs > 2 points
+    const double dDifference = m_targetLaneD - egoCar.d;
+    double beforeEndS = egoCar.s + maxSpeed * PATH_DURATION_SECONDS * 0.5;
+    double beforeEndD = egoCar.d + dDifference * 0.5;
 
-    double endS = startS + maxSpeed * PATH_DURATION_SECONDS;
+    double endS = egoCar.s + maxSpeed * PATH_DURATION_SECONDS;
     double endD = m_targetLaneD;
 
-    const std::vector<double> sPoints = { startS, nextS, beforeEndS, endS };
-    const std::vector<double> dPoints = { startD, nextD, beforeEndD, endD };
+    // const std::vector<double> sPoints = { egoCar.s, nextS, beforeEndS, endS };
+    // const std::vector<double> dPoints = { egoCar.d, nextD, beforeEndD, endD };
 
-    std::cout << "spline sPoints:  " << toString(sPoints) << std::endl << std::endl;
-    std::cout << "spline dPoints:  " << toString(dPoints) << std::endl << std::endl;
+    // std::cout << "spline sPoints:  " << toString(sPoints) << std::endl << std::endl;
+    // std::cout << "spline dPoints:  " << toString(dPoints) << std::endl << std::endl;
 
+
+    // std::vector<double> xPoints, yPoints;
+    // std::tie(xPoints, yPoints) = getXY(sPoints, dPoints, m_waypoints);
+
+    // std::cout << "spline xPoints:  " << toString(xPoints) << std::endl << std::endl;
+    // std::cout << "spline yPoints:  " << toString(yPoints) << std::endl << std::endl;
+
+    double beforeEndX, beforeEndY, endX, endY;
+    std::tie(beforeEndX, beforeEndY) = getXY(beforeEndS, beforeEndD, m_waypoints);
+    std::tie(endX, endY) = getXY(endS, endD, m_waypoints);
+
+    // Prepend some points of the car position history
     std::vector<double> xPoints, yPoints;
-    std::tie(xPoints, yPoints) = getXY(sPoints, dPoints, m_waypoints);
 
-    std::cout << "spline xPoints:  " << toString(xPoints) << std::endl << std::endl;
-    std::cout << "spline yPoints:  " << toString(yPoints) << std::endl << std::endl;
+    double xReference = egoCar.x;
+    double yReference = egoCar.y;
 
-    if (prevAvailable != 0)
+    auto xHistIter = m_historyEgoX.begin();  // start from most recent
+    auto yHistIter = m_historyEgoY.begin();
+    for (; xHistIter != m_historyEgoX.end() && xHistIter != m_historyEgoY.end(); ++xHistIter, ++yHistIter)
     {
-        // Start point will already be included, hence the -1
+        double histX = *xHistIter;
+        double histY = *yHistIter;
+        const double distToRef = distance(histX, histY, xReference, yReference);
 
-        auto xPointsPrepend = std::vector<double>(prevPathX.begin(), prevPathX.begin() + prevAvailable - 1);
-        auto yPointsPrepend = std::vector<double>(prevPathY.begin(), prevPathY.begin() + prevAvailable - 1);
+        // Don't consider points in history that are too close to one another - it messes up the splines
+        spdlog::debug("Considering historical ({}, {}) to prepend to path. Distance to reference = {}.", histX, histY, distToRef);
+        if (distToRef > 3.0)
+        {
+            spdlog::info("Prepended.");
+            xPoints.insert(xPoints.begin(), histX);
+            yPoints.insert(yPoints.begin(), histY);
 
-        std::cout << "prev xPoints:  " << toString(xPointsPrepend) << std::endl << std::endl;
-        std::cout << "prev yPoints:  " << toString(yPointsPrepend) << std::endl << std::endl;
-
-        xPoints.insert(xPoints.begin(), prevPathX.begin(), prevPathX.begin() + prevAvailable - 1);
-        yPoints.insert(yPoints.begin(), prevPathY.begin(), prevPathY.begin() + prevAvailable - 1);
+            xReference = histX;
+            yReference = histY;
+        };
     }
+
+    // Push starting position
+    xPoints.push_back(egoCar.x);
+    yPoints.push_back(egoCar.y);
+
+    // Add prev points, returned by the simulator
+    if (prevPathX.size() >= 5)
+    {
+        xPoints.push_back(prevPathX[4]);
+        yPoints.push_back(prevPathY[4]);
+    }
+    if (prevPathX.size() >= 10)
+    {
+        xPoints.push_back(prevPathX[9]);
+        yPoints.push_back(prevPathY[9]);
+    }
+
+    // Push endpoints
+    xPoints.push_back(beforeEndX);
+    xPoints.push_back(endX);
+    yPoints.push_back(beforeEndY);
+    yPoints.push_back(endY);
+
+    std::cout << "xPoints:  " << toString(xPoints) << std::endl << std::endl;
+    std::cout << "yPoints:  " << toString(yPoints) << std::endl << std::endl;
 
     std::vector<double> xCarPoints, yCarPoints;
     std::tie(xCarPoints, yCarPoints) = worldCoordToCarCoord(egoCar, xPoints, yPoints);
@@ -387,10 +402,10 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::genPathSpline(
     yCarPoints.clear();
 
     // Derived from the standard  x = x0 + v * t + a * t^2 / 2, with x0 = 0
-    const double acceleration = 2 * (carEndX - startSpeed * PATH_DURATION_SECONDS) / std::pow(PATH_DURATION_SECONDS, 2.0);
+    const double acceleration = 2 * (carEndX - egoCar.speed * PATH_DURATION_SECONDS) / std::pow(PATH_DURATION_SECONDS, 2.0);
     for (double t = NODE_TRAVERSAL_RATE_SECONDS; t < PATH_DURATION_SECONDS; t += NODE_TRAVERSAL_RATE_SECONDS)
     {
-        const double x = startSpeed * t + acceleration * std::pow(t, 2.0) / 2.0;
+        const double x = MPH_TO_METRES_PER_SECOND(egoCar.speed) * t + acceleration * std::pow(t, 2.0) / 2.0;
         xCarPoints.push_back(x);
         yCarPoints.push_back(spl(x));
     }
@@ -400,18 +415,18 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::genPathSpline(
     std::cout << "Sending path X:  " << toString(xPoints) << std::endl << std::endl;
     std::cout << "Sending path Y:  " << toString(yPoints) << std::endl << std::endl;
 
-    std::vector<double> sPointsNew, dPointsNew;
-    std::tie(sPointsNew, dPointsNew) = getFrenet(xPoints, yPoints, m_waypoints);
+    // std::vector<double> sPointsNew, dPointsNew;
+    // std::tie(sPointsNew, dPointsNew) = getFrenet(xPoints, yPoints, m_waypoints);
 
-    std::cout << "Sending path S:  " << toString(sPointsNew) << std::endl << std::endl;
-    std::cout << "Sending path D:  " << toString(dPointsNew) << std::endl << std::endl;
+    // std::cout << "Sending path S:  " << toString(sPointsNew) << std::endl << std::endl;
+    // std::cout << "Sending path D:  " << toString(dPointsNew) << std::endl << std::endl;
 
     return std::make_pair(xPoints, yPoints);
 }
 
 Kinematics PathPlanner::computeSdKinematics()
 {
-    if (m_trajectoryHistoryX.size() < 4)
+    if (m_historyEgoX.size() < 4)
     {
         // Just started
 
@@ -421,8 +436,8 @@ Kinematics PathPlanner::computeSdKinematics()
         return Kinematics {};
     }
 
-    auto xHistIter = m_trajectoryHistoryX.begin();
-    auto yHistIter = m_trajectoryHistoryY.begin();
+    auto xHistIter = m_historyEgoX.begin();
+    auto yHistIter = m_historyEgoY.begin();
 
     double heading0 = orientation(*(yHistIter + 0) - *(yHistIter + 1), *(xHistIter + 0) - *(xHistIter + 1));
     double heading1 = orientation(*(yHistIter + 1) - *(yHistIter + 2), *(xHistIter + 1) - *(xHistIter + 2));
@@ -448,8 +463,8 @@ Kinematics PathPlanner::computeSdKinematics()
 
 Kinematics PathPlanner::computeXyKinematics()
 {
-    assert(m_trajectoryHistoryX.size() == m_trajectoryHistoryY.size());
-    if (m_trajectoryHistoryX.size() < 4)
+    assert(m_historyEgoX.size() == m_historyEgoY.size());
+    if (m_historyEgoX.size() < 4)
     {
         // Just started. The history will fill up on later ticks.
 
@@ -459,8 +474,8 @@ Kinematics PathPlanner::computeXyKinematics()
         return Kinematics {};
     }
 
-    auto xHistIter = m_trajectoryHistoryX.begin();
-    auto yHistIter = m_trajectoryHistoryY.begin();
+    auto xHistIter = m_historyEgoX.begin();
+    auto yHistIter = m_historyEgoY.begin();
 
     double xVelocity1 = (*(xHistIter + 0) - *(xHistIter + 1)) / NODE_TRAVERSAL_RATE_SECONDS;
     double xVelocity2 = (*(xHistIter + 1) - *(xHistIter + 2)) / NODE_TRAVERSAL_RATE_SECONDS;
@@ -476,12 +491,12 @@ Kinematics PathPlanner::computeXyKinematics()
 Kinematics PathPlanner::computeXyKinematicsHist(std::vector<double> prevPathX, std::vector<double> prevPathY, const unsigned pastElementCount)
 {
     assert(prevPathX.size() == prevPathY.size());
-    assert(m_trajectoryHistoryX.size() == m_trajectoryHistoryY.size());
+    assert(m_historyEgoX.size() == m_historyEgoY.size());
 
     prevPathX.resize(pastElementCount);
     prevPathY.resize(pastElementCount);
 
-    if (prevPathX.size() + m_trajectoryHistoryX.size() < 3)
+    if (prevPathX.size() + m_historyEgoX.size() < 3)
     {
         // Just started. The history will fill up on later ticks.
 
@@ -492,8 +507,8 @@ Kinematics PathPlanner::computeXyKinematicsHist(std::vector<double> prevPathX, s
     }
 
     // Basic idea: use elements from prevPath to compute kinematics, but borrow from history if not enough.
-    auto xHistIter = m_trajectoryHistoryX.begin();
-    auto yHistIter = m_trajectoryHistoryY.begin();
+    auto xHistIter = m_historyEgoX.begin();
+    auto yHistIter = m_historyEgoY.begin();
 
     while (prevPathX.size() < 3)
     {

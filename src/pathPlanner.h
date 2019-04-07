@@ -44,7 +44,7 @@ namespace path_planning
         /*
          * Update the history of the trajectory
          */
-        void updateTrajectoryHistory(const SimulatorResponseData& simulatorData);
+        void updateHistory(const SimulatorResponseData& simulatorData);
 
         /*
          * Generate a XY trajectory for a path, covering both straight-line movements, and lane changing activities
@@ -139,13 +139,14 @@ namespace path_planning
         */
         static std::pair<std::vector<double>, std::vector<double>> carCoordToWorldCoord(const EgoCar& egoCar, std::vector<double> xsCar, std::vector<double> ysCar);
 
-
         const std::vector<Waypoint> m_waypoints;
-        std::vector<double> m_prevSentTrajectoryX, m_prevSentTrajectoryY;
-        std::deque<double> m_trajectoryHistoryX, m_trajectoryHistoryY;
+        std::vector<double> m_prevSentX, m_prevSentY;
         double m_targetLaneD { D_MIDDLE_LANE };
         int m_targetLaneIndex { 1 };  // TODO: should be merged with m_targetLaneIndex
         unsigned int m_laneChangeDelay { 5u };  // Prevent changing lanes for this many time steps
+
+        // History
+        std::deque<double> m_historyEgoX, m_historyEgoY;
     };
 }
 

@@ -136,6 +136,7 @@ namespace path_planning
     {
         assert(xPath.size() == yPath.size());
         const auto pathSize = xPath.size();
+        assert(pathSize >= 2);
 
         std::vector<double> sPath(pathSize), dPath(pathSize);
         double s, d;
