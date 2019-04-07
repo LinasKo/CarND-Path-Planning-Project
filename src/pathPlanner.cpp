@@ -15,7 +15,7 @@
 #include "spdlog/spdlog.h"
 #include "spline/spline.h"
 
-#include "helpers.h"
+#include "helpersOld.h"
 
 
 using namespace path_planning;
@@ -49,10 +49,10 @@ static constexpr double D_LIMIT_FOR_LANE_CHANGE_PENALTY = 0.5;  // What's the ma
 
 PathPlanner::PathPlanner(std::vector<Waypoint> waypoints) :
     m_waypoints(waypoints)
-{
-}
+{}
 
 std::pair<std::vector<double>, std::vector<double>> PathPlanner::planPath(const SimulatorResponseData& simulatorData)
+
 {
     updateTrajectoryHistory(simulatorData);
     spdlog::trace("[planPath] EgoCar: x={}, y={}, s={}, d={}", simulatorData.egoCar.x, simulatorData.egoCar.y, simulatorData.egoCar.s, simulatorData.egoCar.d);
@@ -61,6 +61,7 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::planPath(const 
 
     // const auto usePrevious = 5;
     // Kinematics kinematics = computeXyKinematicsHist(simulatorData.prevPathX, simulatorData.prevPathY, usePrevious);
+
     spdlog::trace("[planPath] XY Kinematics: vx={}, ax={}, vy={}, ay={}", kinematics.velocity0, kinematics.acceleration0, kinematics.velocity1, kinematics.acceleration1);
     spdlog::trace("[planPath] Reported car speed vs kinematics dx, dy: {} vs ({}, {})", MPH_TO_METRES_PER_SECOND(simulatorData.egoCar.speed), kinematics.velocity0, kinematics.velocity1);
 
@@ -69,10 +70,10 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::planPath(const 
 
     // Keep a counter that attempts to track when a car has completed a lane change manoeuvre
     // Side effect of low penalty tolerance: no overtaking on the curved road
-    if (std::abs(simulatorData.egoCar.d - m_currentLaneD) > D_LIMIT_FOR_LANE_CHANGE_PENALTY)
+    if (std::abs(simulatorData.egoCar.d - m_targetLaneD) > D_LIMIT_FOR_LANE_CHANGE_PENALTY)
     {
         m_laneChangeDelay = LANE_CHANGE_PENALTY;
-        spdlog::trace("[planPath] Applied lane change penalty for d distance of {}.", std::abs(simulatorData.egoCar.d - m_currentLaneD));
+        spdlog::trace("[planPath] Applied lane change penalty for d distance of {}.", std::abs(simulatorData.egoCar.d - m_targetLaneD));
     }
     else if (m_laneChangeDelay != 0)
     {
@@ -82,52 +83,49 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::planPath(const 
     else
     {
         // Allow lane change
-        if (m_currentLaneD == D_LEFT_LANE && laneSpeeds[1] - LANE_CHANGE_COST > laneSpeeds[0] && not isLaneBlocked(1, simulatorData.egoCar, simulatorData.otherCars))
+        if (m_targetLaneD == D_LEFT_LANE && laneSpeeds[1] - LANE_CHANGE_COST > laneSpeeds[0] && not isLaneBlocked(1, simulatorData.egoCar, simulatorData.otherCars))
         {
             spdlog::info("[planPath] Changing to middle lane.");
-            m_currentLaneD = D_MIDDLE_LANE;
-            m_currentLaneIndex = 1;
+            m_targetLaneD = D_MIDDLE_LANE;
+            m_targetLaneIndex = 1;
             m_laneChangeDelay = LANE_CHANGE_PENALTY;
         }
-        else if (m_currentLaneD == D_RIGHT_LANE && laneSpeeds[1] - LANE_CHANGE_COST > laneSpeeds[2] && not isLaneBlocked(1, simulatorData.egoCar, simulatorData.otherCars))
+        else if (m_targetLaneD == D_RIGHT_LANE && laneSpeeds[1] - LANE_CHANGE_COST > laneSpeeds[2] && not isLaneBlocked(1, simulatorData.egoCar, simulatorData.otherCars))
         {
             spdlog::info("[planPath] Changing to middle lane.");
-            m_currentLaneD = D_MIDDLE_LANE;
-            m_currentLaneIndex = 1;
+            m_targetLaneD = D_MIDDLE_LANE;
+            m_targetLaneIndex = 1;
             m_laneChangeDelay = LANE_CHANGE_PENALTY;
         }
-        else if (m_currentLaneD == D_MIDDLE_LANE && (laneSpeeds[0] - LANE_CHANGE_COST > laneSpeeds[1] || laneSpeeds[2] - LANE_CHANGE_COST > laneSpeeds[1]))
+        else if (m_targetLaneD == D_MIDDLE_LANE && (laneSpeeds[0] - LANE_CHANGE_COST > laneSpeeds[1] || laneSpeeds[2] - LANE_CHANGE_COST > laneSpeeds[1]))
         {
             if (laneSpeeds[0] > laneSpeeds[2] && not isLaneBlocked(0, simulatorData.egoCar, simulatorData.otherCars))
             {
                 spdlog::info("[planPath] Changing to left lane.");
-                m_currentLaneD = D_LEFT_LANE;
-                m_currentLaneIndex = 0;
+                m_targetLaneD = D_LEFT_LANE;
+                m_targetLaneIndex = 0;
                 m_laneChangeDelay = LANE_CHANGE_PENALTY;
             }
             else if (not isLaneBlocked(2, simulatorData.egoCar, simulatorData.otherCars))
             {
                 spdlog::info("[planPath] Changing to right lane.");
-                m_currentLaneD = D_RIGHT_LANE;
-                m_currentLaneIndex = 2;
+                m_targetLaneD = D_RIGHT_LANE;
+                m_targetLaneIndex = 2;
                 m_laneChangeDelay = LANE_CHANGE_PENALTY;
             }
         }
     }
 
-    std::pair<std::vector<double>, std::vector<double>> xyTrajectory = genPath(simulatorData.egoCar, kinematics, laneSpeeds[m_currentLaneIndex], simulatorData.otherCars);
+    // std::pair<std::vector<double>, std::vector<double>> xyTrajectory = genPath(simulatorData.egoCar, kinematics, laneSpeeds[m_targetLaneIndex], simulatorData.otherCars);
+    const unsigned keepPrev = 10;
+    std::pair<std::vector<double>, std::vector<double>> xyTrajectory = genPathSpline(
+        simulatorData.egoCar, laneSpeeds[m_targetLaneIndex], simulatorData.prevPathX, simulatorData.prevPathY, keepPrev);
 
-    double nextX, nextY, carX, carY, checkX, checkY;
-    nextX = xyTrajectory.first[25];
-    nextY = xyTrajectory.second[25];
-    std::tie(carX, carY) = worldCoordToCarCoord(simulatorData.egoCar, nextX, nextY);
-    std::tie(checkX, checkY) = carCoordToWorldCoord(simulatorData.egoCar, carX, carY);
-    spdlog::warn("[planPath] egoCar.x={}, egoCar.y={}, egoCar.yaw={}", simulatorData.egoCar.x, simulatorData.egoCar.y, simulatorData.egoCar.yaw);
-    spdlog::warn("[planPath] nextX={}, nextY={}, carX={}, carY={}, checkX={}, checkY={}", nextX, nextY, carX, carY, checkX, checkY);
-
-    spdlog::debug("[planPath] --- --- --- --- ---");
     m_prevSentTrajectoryX = xyTrajectory.first;
     m_prevSentTrajectoryY = xyTrajectory.second;
+
+    spdlog::debug("[planPath] ------------------------------");
+
     return xyTrajectory;
 }
 
@@ -171,10 +169,10 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::genPath(
     double auxS = nextS - 0.1;  // Hard to tell if false positive, but setting higher values here might prevent some freakouts (though mostly not)
 
     double nextX, nextY;
-    std::tie(nextX, nextY) = getXY(nextS, m_currentLaneD, m_waypoints);
+    std::tie(nextX, nextY) = getXY(nextS, m_targetLaneD, m_waypoints);
 
     double auxX, auxY;
-    std::tie(auxX, auxY) = getXY(auxS, m_currentLaneD, m_waypoints);
+    std::tie(auxX, auxY) = getXY(auxS, m_targetLaneD, m_waypoints);
 
     double velocityProportionX = (nextX - auxX) / distance(nextX, nextY, auxX, auxY);
     double velocityProportionY = (nextY - auxY) / distance(nextX, nextY, auxX, auxY);
@@ -218,7 +216,7 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::genPathWithPast
     assert(prevPathX.size() == prevPathY.size());
     int usePrevious = std::min((unsigned)prevPathX.size(), pastElementCount);
 
-    double startX, startY, startS, speed;
+    double startX, startY, startS, startD, yaw, speed;
     if (usePrevious <= 2)
     {
         usePrevious = 0;  // Ignore history
@@ -236,7 +234,7 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::genPathWithPast
         startX = prevPathX[usePrevious-1];
         startY = prevPathY[usePrevious-1];
         startS = prevPathS[usePrevious-1];
-        speed = prevPathS[usePrevious-1] - prevPathS[usePrevious-2];
+        speed = prevPathS[usePrevious-1] - prevPathS[usePrevious-2];  // TODO: this needs to be divided by NODE_TRAVERSAL_RATE_SECONDS
     }
 
     spdlog::debug("[genPath] speed={}, maxLaneSpeed={}", speed, maxLaneSpeed);
@@ -247,15 +245,15 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::genPathWithPast
     double endS = startS + maxSpeed * (PATH_DURATION_SECONDS - (usePrevious - 1) * NODE_TRAVERSAL_RATE_SECONDS);
     double auxS = endS - 0.1;
 
-    spdlog::debug("[genPath] endS={}, m_currentLaneD={}", endS, m_currentLaneD);
+    spdlog::debug("[genPath] endS={}, m_targetLaneD={}", endS, m_targetLaneD);
 
     double endX, endY;
-    std::tie(endX, endY) = getXY(endS, m_currentLaneD, m_waypoints);
+    std::tie(endX, endY) = getXY(endS, m_targetLaneD, m_waypoints);
 
     spdlog::debug("[genPath] auxS={}", auxS);
 
     double auxX, auxY;
-    std::tie(auxX, auxY) = getXY(auxS, m_currentLaneD, m_waypoints);
+    std::tie(auxX, auxY) = getXY(auxS, m_targetLaneD, m_waypoints);
 
     double velocityProportionX = (endX - auxX) / distance(endX, endY, auxX, auxY);
     double velocityProportionY = (endY - auxY) / distance(endX, endY, auxX, auxY);
@@ -281,6 +279,134 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::genPathWithPast
     yTrajectory.insert(yTrajectory.begin(), prevPathY.begin(), prevPathY.begin() + usePrevious);
 
     return std::make_pair(xTrajectory, yTrajectory);
+}
+
+std::pair<std::vector<double>, std::vector<double>> PathPlanner::genPathSpline(
+    const EgoCar& egoCar, const double maxLaneSpeed, const std::vector<double>& prevPathX, const std::vector<double>& prevPathY, const unsigned keepPrevious)
+{
+    assert(prevPathX.size() == prevPathY.size());
+    const unsigned prevAvailable = std::min((unsigned)prevPathX.size(), keepPrevious);
+
+    std::vector<double> prevPathS, prevPathD;
+    std::tie(prevPathS, prevPathD) = getFrenet(prevPathX, prevPathY, m_waypoints);
+
+    std::cout << "Prev path:" << std::endl;
+    std::cout << "X:  " << toString(prevPathX) << std::endl << std::endl;
+    std::cout << "Y:  " << toString(prevPathY) << std::endl << std::endl;
+    std::cout << "S:  " << toString(prevPathS) << std::endl << std::endl;
+    std::cout << "D:  " << toString(prevPathD) << std::endl << std::endl;
+
+    // Compute starting point
+    double startX, startY, startS, startD, startYaw, startSpeed;
+    if (prevAvailable == 0)
+    {
+        startX = egoCar.x;
+        startY = egoCar.y;
+        startS = egoCar.s;
+        startD = egoCar.d;
+    }
+    else
+    {
+        startX = prevPathX[prevAvailable - 1];
+        startY = prevPathY[prevAvailable - 1];
+        startS = prevPathS[prevAvailable - 1];
+        startD = prevPathD[prevAvailable - 1];
+    }
+
+    if (prevAvailable <= 2)
+    {
+        startYaw = egoCar.yaw;
+        startSpeed = MPH_TO_METRES_PER_SECOND(egoCar.speed);
+    }
+    else
+    {
+        startYaw = std::atan2(prevPathY[prevAvailable - 1] - prevPathY[prevAvailable - 2], prevPathX[prevAvailable - 1] - prevPathX[prevAvailable - 2]);
+        startSpeed = (prevPathS[prevAvailable - 1] - prevPathS[prevAvailable - 2]) / NODE_TRAVERSAL_RATE_SECONDS;
+    }
+
+    // Set up spline keypoints
+    spdlog::debug("[genPathSpline] maxLaneSpeed = {}, startSpeed + MAX_ACCELERATION = {}", maxLaneSpeed, startSpeed + MAX_ACCELERATION);
+    const double maxSpeed = std::min(maxLaneSpeed, startSpeed + MAX_ACCELERATION);
+    const double dDifference = m_targetLaneD - startD;
+
+    double nextS = startS + maxSpeed * PATH_DURATION_SECONDS * 0.25;
+    double nextD = startD + dDifference * 0.25;
+
+    double beforeEndS = startS + maxSpeed * PATH_DURATION_SECONDS * 0.75;
+    double beforeEndD = startD + dDifference * 0.75;
+
+    double endS = startS + maxSpeed * PATH_DURATION_SECONDS;
+    double endD = m_targetLaneD;
+
+    const std::vector<double> sPoints = { startS, nextS, beforeEndS, endS };
+    const std::vector<double> dPoints = { startD, nextD, beforeEndD, endD };
+
+    std::cout << "spline sPoints:  " << toString(sPoints) << std::endl << std::endl;
+    std::cout << "spline dPoints:  " << toString(dPoints) << std::endl << std::endl;
+
+    std::vector<double> xPoints, yPoints;
+    std::tie(xPoints, yPoints) = getXY(sPoints, dPoints, m_waypoints);
+
+    std::cout << "spline xPoints:  " << toString(xPoints) << std::endl << std::endl;
+    std::cout << "spline yPoints:  " << toString(yPoints) << std::endl << std::endl;
+
+    if (prevAvailable != 0)
+    {
+        // Start point will already be included, hence the -1
+
+        auto xPointsPrepend = std::vector<double>(prevPathX.begin(), prevPathX.begin() + prevAvailable - 1);
+        auto yPointsPrepend = std::vector<double>(prevPathY.begin(), prevPathY.begin() + prevAvailable - 1);
+
+        std::cout << "prev xPoints:  " << toString(xPointsPrepend) << std::endl << std::endl;
+        std::cout << "prev yPoints:  " << toString(yPointsPrepend) << std::endl << std::endl;
+
+        xPoints.insert(xPoints.begin(), prevPathX.begin(), prevPathX.begin() + prevAvailable - 1);
+        yPoints.insert(yPoints.begin(), prevPathY.begin(), prevPathY.begin() + prevAvailable - 1);
+    }
+
+    std::vector<double> xCarPoints, yCarPoints;
+    std::tie(xCarPoints, yCarPoints) = worldCoordToCarCoord(egoCar, xPoints, yPoints);
+
+    std::cout << "local car xPoints:  " << toString(xCarPoints) << std::endl << std::endl;
+    std::cout << "local car yPoints:  " << toString(yCarPoints) << std::endl << std::endl;
+
+    // Example xCarPoints: 0.434606 0.869412 1.30431 1.73945 2.17479 2.61027 3.04584 3.48166 3.91767 4.35386 2.4132 -0.30777 -1.66825
+    // Therefore, it still seems that the issue happens when joining in the new points / adding new s
+
+    tk::spline spl;
+    if (not std::is_sorted(xCarPoints.begin(), xCarPoints.end()))
+    {
+        spdlog::error("[genPathSpline] xCarPoints are not sorted: {}", toString(xCarPoints));
+        assert(false);
+    }
+    spl.set_points(xCarPoints, yCarPoints);
+
+    // Compute acceleration that helps reach destination in given time; set x, y
+    const double carEndX = xCarPoints[xCarPoints.size() - 1];
+    xCarPoints.clear();
+    yCarPoints.clear();
+
+    // Derived from the standard  x = x0 + v * t + a * t^2 / 2, with x0 = 0
+    const double acceleration = 2 * (carEndX - startSpeed * PATH_DURATION_SECONDS) / std::pow(PATH_DURATION_SECONDS, 2.0);
+    for (double t = NODE_TRAVERSAL_RATE_SECONDS; t < PATH_DURATION_SECONDS; t += NODE_TRAVERSAL_RATE_SECONDS)
+    {
+        const double x = startSpeed * t + acceleration * std::pow(t, 2.0) / 2.0;
+        xCarPoints.push_back(x);
+        yCarPoints.push_back(spl(x));
+    }
+
+    std::tie(xPoints, yPoints) = carCoordToWorldCoord(egoCar, xCarPoints, yCarPoints);
+
+    std::cout << "Sending path X:  " << toString(xPoints) << std::endl << std::endl;
+    std::cout << "Sending path Y:  " << toString(yPoints) << std::endl << std::endl;
+
+    std::vector<double> sPointsNew, dPointsNew;
+    std::tie(sPointsNew, dPointsNew) = getFrenet(xPoints, yPoints, m_waypoints);
+
+    std::cout << "Sending path S:  " << toString(sPointsNew) << std::endl << std::endl;
+    std::cout << "Sending path D:  " << toString(dPointsNew) << std::endl << std::endl;
+
+    return std::make_pair(xPoints, yPoints);
 }
 
 Kinematics PathPlanner::computeSdKinematics()
@@ -558,6 +684,22 @@ std::pair<double, double> PathPlanner::worldCoordToCarCoord(const EgoCar& egoCar
     return std::make_pair(carX, carY);
 }
 
+std::pair<std::vector<double>, std::vector<double>> PathPlanner::worldCoordToCarCoord(const EgoCar& egoCar, std::vector<double> xsWorld, std::vector<double> ysWorld)
+{
+    assert(xsWorld.size() == ysWorld.size());
+
+    std::vector<double> xsCar(xsWorld.size()), ysCar(xsWorld.size());
+    for (auto i = 0; i < xsWorld.size(); ++i)
+    {
+        double xCar, yCar;
+        std::tie(xCar, yCar) = worldCoordToCarCoord(egoCar, xsWorld[i], ysWorld[i]);
+        xsCar[i] = xCar;
+        ysCar[i] = yCar;
+    }
+
+    return std::make_pair(xsCar, ysCar);
+}
+
 std::pair<double, double> PathPlanner::carCoordToWorldCoord(const EgoCar& egoCar, double carX, double carY)
 {
     const double carYawRadians = M_PI * egoCar.yaw / 180.0;
@@ -569,4 +711,20 @@ std::pair<double, double> PathPlanner::carCoordToWorldCoord(const EgoCar& egoCar
     worldY += egoCar.y;
 
     return std::make_pair(worldX, worldY);
+}
+
+std::pair<std::vector<double>, std::vector<double>> PathPlanner::carCoordToWorldCoord(const EgoCar& egoCar, std::vector<double> xsCar, std::vector<double> ysCar)
+{
+    assert(xsCar.size() == ysCar.size());
+
+    std::vector<double> xsWorld(ysCar.size()), ysWorld(xsCar.size());
+    for (auto i = 0; i < xsCar.size(); ++i)
+    {
+        double xWorld, yWorld;
+        std::tie(xWorld, yWorld) = carCoordToWorldCoord(egoCar, xsCar[i], ysCar[i]);
+        xsWorld[i] = xWorld;
+        ysWorld[i] = yWorld;
+    }
+
+    return std::make_pair(xsWorld, ysWorld);
 }

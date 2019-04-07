@@ -4,6 +4,8 @@
 #include <cassert>
 #include <limits>
 #include <math.h>
+#include <sstream>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -34,7 +36,7 @@ namespace path_planning
         assert(waypoints.size() > 0);
 
         double closestLen = std::numeric_limits<double>::max();
-        int closestWaypointIndex = -1;
+        int closestWaypointIndex = 0;
 
         for (int i = 0; i < waypoints.size(); ++i)
         {
@@ -53,28 +55,28 @@ namespace path_planning
     /*
      * Returns the closest waypoint ahead of the vehicle / point by making sure to take the orientation into account.
      */
-    int NextWaypoint(double x, double y, double theta, const std::vector<Waypoint>& waypoints)
+    int nextWaypoint(double x, double y, double theta, const std::vector<Waypoint>& waypoints)
     {
-        int closestWaypointIndex = closestWaypoint(x, y, waypoints);
-        Waypoint closestWaypoint = waypoints[closestWaypointIndex];
+        int nearestWaypointIndex = closestWaypoint(x, y, waypoints);
+        Waypoint nearestWaypoint = waypoints[nearestWaypointIndex];
 
-        double heading = atan2((closestWaypoint.y - y), (closestWaypoint.x - x));
+        double heading = atan2((nearestWaypoint.y - y), (nearestWaypoint.x - x));
         double angle = fabs(theta - heading);
         angle = std::min(2 * pi() - angle, angle);
 
         if (angle > pi() / 2)
         {
             // Assume waypoints are ordered
-            ++closestWaypointIndex;
+            ++nearestWaypointIndex;
 
             // Wrap around to waypoint 0
-            if (closestWaypointIndex == waypoints.size())
+            if (nearestWaypointIndex == waypoints.size())
             {
-                closestWaypointIndex = 0;
+                nearestWaypointIndex = 0;
             }
         }
 
-        return closestWaypointIndex;
+        return nearestWaypointIndex;
     }
 
     /*
@@ -82,7 +84,7 @@ namespace path_planning
      */
     std::pair<double, double> getFrenet(double x, double y, double theta, const std::vector<Waypoint>& waypoints)
     {
-        int nextWpIndex = NextWaypoint(x, y, theta, waypoints);
+        int nextWpIndex = nextWaypoint(x, y, theta, waypoints);
         const Waypoint& nextWp = waypoints[nextWpIndex];
 
         int prevWpIndex = nextWpIndex - 1;
@@ -98,9 +100,9 @@ namespace path_planning
         double xY = y - prevWp.y;
 
         // find the projection of x onto n
-        double proj_norm = (xX * nX + xY * nY) / (nX * nX + nY * nY);
-        double projX = proj_norm * nX;
-        double projY = proj_norm * nY;
+        double projNorm = (xX * nX + xY * nY) / (nX * nX + nY * nY);
+        double projX = projNorm * nX;
+        double projY = projNorm * nY;
 
         double frenetD = distance(xX, xY, projX, projY);
 
@@ -130,7 +132,7 @@ namespace path_planning
     /*
      * Get the frenet coordinates of every element in an XY path
      */
-    std::pair<std::vector<double>, std::vector<double>> getFrenet(std::vector<double> xPath, std::vector<double> yPath, const std::vector<Waypoint>& waypoints)
+    std::pair<std::vector<double>, std::vector<double>> getFrenet(const std::vector<double>& xPath, const std::vector<double>& yPath, const std::vector<Waypoint>& waypoints)
     {
         assert(xPath.size() == yPath.size());
         const auto pathSize = xPath.size();
@@ -151,9 +153,12 @@ namespace path_planning
             dPath[i] = d;
         }
 
-        std::tie(s, d) = getFrenet(xPath[0], yPath[0], heading0, waypoints);
-        sPath[0] = s;
-        dPath[0] = d;
+        if (pathSize != 0)
+        {
+            std::tie(s, d) = getFrenet(xPath[0], yPath[0], heading0, waypoints);
+            sPath[0] = s;
+            dPath[0] = d;
+        }
 
         return std::make_pair(sPath, dPath);
     }
@@ -206,6 +211,17 @@ namespace path_planning
         }
 
         return std::make_pair(xPath, yPath);
+    }
+
+    /*
+     * Convert a vector to string
+     */
+    template <typename T>
+    std::string toString(const std::vector<T>& data)
+    {
+        std::stringstream result;
+        std::copy(data.begin(), data.end(), std::ostream_iterator<T>(result, " "));
+        return result.str();
     }
 }
 

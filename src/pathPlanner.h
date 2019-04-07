@@ -60,6 +60,12 @@ namespace path_planning
             const double maxLaneSpeed, const std::vector<OtherCar>& otherCars, const unsigned pastElementCount);
 
         /*
+         * Generate XY trajectory as a spline
+         */
+        std::pair<std::vector<double>, std::vector<double>> genPathSpline(
+            const EgoCar& egoCars, const double maxLaneSpeed, const std::vector<double>& prevPathX, const std::vector<double>& prevPathY, const unsigned keepPrevious);
+
+        /*
          * Compute S and D velocity and acceleration of the vehicle
          */
         Kinematics computeSdKinematics();
@@ -116,18 +122,29 @@ namespace path_planning
         /*
         * Convert XY pose in map coordinates to car coordinates
         */
-        static std::pair<double, double> worldCoordToCarCoord(const EgoCar& egoCar, double x, double y);
+        static std::pair<double, double> worldCoordToCarCoord(const EgoCar& egoCar, double xWorld, double yWorld);
+
+        /*
+        * Convert XY poses in map coordinates to car coordinates
+        */
+        static std::pair<std::vector<double>, std::vector<double>> worldCoordToCarCoord(const EgoCar& egoCar, std::vector<double> xsWorld, std::vector<double> ysWorld);
 
         /*
         * Convert XY pose in car coordinates to map coordinates
         */
-        static std::pair<double, double> carCoordToWorldCoord(const EgoCar& egoCar, double x, double y);
+        static std::pair<double, double> carCoordToWorldCoord(const EgoCar& egoCar, double xCar, double yCar);
+
+        /*
+        * Convert XY pose in car coordinates to map coordinates
+        */
+        static std::pair<std::vector<double>, std::vector<double>> carCoordToWorldCoord(const EgoCar& egoCar, std::vector<double> xsCar, std::vector<double> ysCar);
+
 
         const std::vector<Waypoint> m_waypoints;
         std::vector<double> m_prevSentTrajectoryX, m_prevSentTrajectoryY;
         std::deque<double> m_trajectoryHistoryX, m_trajectoryHistoryY;
-        double m_currentLaneD { D_MIDDLE_LANE };
-        int m_currentLaneIndex { 1 };  // TODO: should be merged with m_currentLaneIndex
+        double m_targetLaneD { D_MIDDLE_LANE };
+        int m_targetLaneIndex { 1 };  // TODO: should be merged with m_targetLaneIndex
         unsigned int m_laneChangeDelay { 5u };  // Prevent changing lanes for this many time steps
     };
 }
