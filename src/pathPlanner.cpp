@@ -291,16 +291,13 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::genPathSpline(
     assert(prevPathX.size() == prevPathY.size());
     const unsigned prevAvailable = std::min((unsigned)prevPathX.size(), keepPrevious);
 
-    std::cout << "Prev path:" << std::endl;
-    std::cout << "X:  " << toString(prevPathX) << std::endl << std::endl;
-    std::cout << "Y:  " << toString(prevPathY) << std::endl << std::endl;
+    spdlog::trace("Prev path:");
+    spdlog::trace("X:  {}\n", toString(prevPathX));
+    spdlog::trace("Y:  {}\n", toString(prevPathY));
 
     // Set up spline keypoints
     spdlog::debug("[genPathSpline] maxLaneSpeed = {}, startSpeed + MAX_ACCELERATION = {}", maxLaneSpeed, MPH_TO_METRES_PER_SECOND(egoCar.speed) + MAX_ACCELERATION);
     const double maxSpeed = std::min(maxLaneSpeed, MPH_TO_METRES_PER_SECOND(egoCar.speed) + MAX_ACCELERATION);
-
-    // double nextS = egoCar.s + maxSpeed * PATH_DURATION_SECONDS * 0.25;
-    // double nextD = egoCar.d + dDifference * 0.25;
 
     // Just because spline needs > 2 points
     const double dDifference = m_targetLaneD - egoCar.d;
@@ -309,19 +306,6 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::genPathSpline(
 
     double endS = egoCar.s + maxSpeed * PATH_DURATION_SECONDS;
     double endD = m_targetLaneD;
-
-    // const std::vector<double> sPoints = { egoCar.s, nextS, beforeEndS, endS };
-    // const std::vector<double> dPoints = { egoCar.d, nextD, beforeEndD, endD };
-
-    // std::cout << "spline sPoints:  " << toString(sPoints) << std::endl << std::endl;
-    // std::cout << "spline dPoints:  " << toString(dPoints) << std::endl << std::endl;
-
-
-    // std::vector<double> xPoints, yPoints;
-    // std::tie(xPoints, yPoints) = getXY(sPoints, dPoints, m_waypoints);
-
-    // std::cout << "spline xPoints:  " << toString(xPoints) << std::endl << std::endl;
-    // std::cout << "spline yPoints:  " << toString(yPoints) << std::endl << std::endl;
 
     double beforeEndX, beforeEndY, endX, endY;
     std::tie(beforeEndX, beforeEndY) = getXY(beforeEndS, beforeEndD, m_waypoints);
@@ -342,10 +326,10 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::genPathSpline(
         const double distToRef = distance(histX, histY, xReference, yReference);
 
         // Don't consider points in history that are too close to one another - it messes up the splines
-        spdlog::debug("Considering historical ({}, {}) to prepend to path. Distance to reference = {}.", histX, histY, distToRef);
-        if (distToRef > 3.0)
+        spdlog::trace("Considering historical ({}, {}) to prepend to path. Distance to reference = {}.", histX, histY, distToRef);
+        if (distToRef > 1.5)
         {
-            spdlog::info("Prepended.");
+            spdlog::trace("Prepended.");
             xPoints.insert(xPoints.begin(), histX);
             yPoints.insert(yPoints.begin(), histY);
 
@@ -376,14 +360,37 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::genPathSpline(
     yPoints.push_back(beforeEndY);
     yPoints.push_back(endY);
 
-    std::cout << "xPoints:  " << toString(xPoints) << std::endl << std::endl;
-    std::cout << "yPoints:  " << toString(yPoints) << std::endl << std::endl;
+    spdlog::trace("xPoints:  {}\n", toString(xPoints));
+    spdlog::trace("yPoints:  {}\n", toString(yPoints));
+
+    // How much time passed while pursuing target
+    const double timePassed = (m_prevSentX.size() - prevPathX.size()) * NODE_TRAVERSAL_RATE_SECONDS;
+    m_timeSpentReachingTarget += timePassed;
+    const double timeRemaining = PATH_DURATION_SECONDS - m_timeSpentReachingTarget;
+    spdlog::debug("[genPathSpline] timePassed={}, m_timeSpentReachingTarget={}, timeRemaining={}", timePassed, m_timeSpentReachingTarget, timeRemaining);
+    if (m_timeSpentReachingTarget + NODE_TRAVERSAL_RATE_SECONDS > timeRemaining)
+    {
+        spdlog::error("[genPathSpline] Did not reach the target in time");
+        assert(false);
+    }
+
+    // Initialise and target to reach if this is the first run or pick a new target if the old one is reached.
+    const double distToTarget = distance(egoCar.x, egoCar.y, m_targetX, m_targetY);
+    spdlog::debug("[genPathSpline] Ego car (x, y)=({}, {}). distToTarget={}",  egoCar.x, egoCar.y, distToTarget);
+    if (m_targetX == std::numeric_limits<double>::min() || m_targetY == std::numeric_limits<double>::min() ||
+        distToTarget < 5.0)
+    {
+        m_targetX = xPoints[xPoints.size() - 1];
+        m_targetY = yPoints[yPoints.size() - 1];
+        m_timeSpentReachingTarget = 0.0;
+        spdlog::debug("[genPathSpline] Setting new target: ({}, {})",  m_targetX, m_targetY);
+    }
 
     std::vector<double> xCarPoints, yCarPoints;
     std::tie(xCarPoints, yCarPoints) = worldCoordToCarCoord(egoCar, xPoints, yPoints);
 
-    std::cout << "local car xPoints:  " << toString(xCarPoints) << std::endl << std::endl;
-    std::cout << "local car yPoints:  " << toString(yCarPoints) << std::endl << std::endl;
+    spdlog::trace("local car xPoints:  {}\n", toString(xCarPoints));
+    spdlog::trace("local car yPoints:  {}\n", toString(yCarPoints));
 
     // Example xCarPoints: 0.434606 0.869412 1.30431 1.73945 2.17479 2.61027 3.04584 3.48166 3.91767 4.35386 2.4132 -0.30777 -1.66825
     // Therefore, it still seems that the issue happens when joining in the new points / adding new s
@@ -396,30 +403,28 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::genPathSpline(
     }
     spl.set_points(xCarPoints, yCarPoints);
 
-    // Compute acceleration that helps reach destination in given time; set x, y
-    const double carEndX = xCarPoints[xCarPoints.size() - 1];
+    double xTargetCarPoint, yTargetCarPoint;
+    std::tie(xTargetCarPoint, yTargetCarPoint) = worldCoordToCarCoord(egoCar, m_targetX, m_targetY);
+
     xCarPoints.clear();
     yCarPoints.clear();
 
     // Derived from the standard  x = x0 + v * t + a * t^2 / 2, with x0 = 0
-    const double acceleration = 2 * (carEndX - egoCar.speed * PATH_DURATION_SECONDS) / std::pow(PATH_DURATION_SECONDS, 2.0);
-    for (double t = NODE_TRAVERSAL_RATE_SECONDS; t < PATH_DURATION_SECONDS; t += NODE_TRAVERSAL_RATE_SECONDS)
+    const double acceleration = 2 * (xTargetCarPoint - egoCar.speed * timeRemaining) / std::pow(timeRemaining, 2.0);
+    for (double t = m_timeSpentReachingTarget + NODE_TRAVERSAL_RATE_SECONDS; t < timeRemaining; t += NODE_TRAVERSAL_RATE_SECONDS)
     {
         const double x = MPH_TO_METRES_PER_SECOND(egoCar.speed) * t + acceleration * std::pow(t, 2.0) / 2.0;
         xCarPoints.push_back(x);
         yCarPoints.push_back(spl(x));
     }
 
+    spdlog::debug("Car path X:  {}\n", toString(xCarPoints));
+    spdlog::debug("Car path path Y:  {}\n", toString(yCarPoints));
+
     std::tie(xPoints, yPoints) = carCoordToWorldCoord(egoCar, xCarPoints, yCarPoints);
 
-    std::cout << "Sending path X:  " << toString(xPoints) << std::endl << std::endl;
-    std::cout << "Sending path Y:  " << toString(yPoints) << std::endl << std::endl;
-
-    // std::vector<double> sPointsNew, dPointsNew;
-    // std::tie(sPointsNew, dPointsNew) = getFrenet(xPoints, yPoints, m_waypoints);
-
-    // std::cout << "Sending path S:  " << toString(sPointsNew) << std::endl << std::endl;
-    // std::cout << "Sending path D:  " << toString(dPointsNew) << std::endl << std::endl;
+    spdlog::trace("Sending path X:  {}\n", toString(xPoints));
+    spdlog::trace("Sending path Y:  {}\n", toString(yPoints));
 
     return std::make_pair(xPoints, yPoints);
 }
