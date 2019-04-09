@@ -148,7 +148,6 @@ namespace path_planning
         // Reach this target before accepring a new plan
         double m_targetX = std::numeric_limits<double>::min();
         double m_targetY = std::numeric_limits<double>::min();
-        double m_timeSpentReachingTarget = 0.0;
 
         // History
         std::deque<double> m_historyEgoX, m_historyEgoY;
