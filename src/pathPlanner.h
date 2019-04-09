@@ -93,7 +93,7 @@ namespace path_planning
         /*
          * Checks if the given lane has a vehicle that is blocking lane changes.
          */
-        bool isLaneBlocked(const int targetLaneIndex, const EgoCar& egoCar, const std::vector<OtherCar>& otherCars) const;
+        bool isLaneBlocked(const double targetLaneD, const EgoCar& egoCar, const std::vector<OtherCar>& otherCars) const;
 
         /*
          * Get estimated speeds in each lane.

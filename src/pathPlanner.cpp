@@ -74,14 +74,14 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::planPath(const 
     else
     {
         // Allow lane change
-        if (m_targetLaneD == D_LEFT_LANE && laneSpeeds[1] - LANE_CHANGE_COST > laneSpeeds[0] && not isLaneBlocked(1, simulatorData.egoCar, simulatorData.otherCars))
+        if (m_targetLaneD == D_LEFT_LANE && laneSpeeds[1] - LANE_CHANGE_COST > laneSpeeds[0] && not isLaneBlocked(D_MIDDLE_LANE, simulatorData.egoCar, simulatorData.otherCars))
         {
             spdlog::info("[planPath] Changing to middle lane.");
             m_targetLaneD = D_MIDDLE_LANE;
             m_targetLaneIndex = 1;
             m_laneChangeDelay = LANE_CHANGE_PENALTY;
         }
-        else if (m_targetLaneD == D_RIGHT_LANE && laneSpeeds[1] - LANE_CHANGE_COST > laneSpeeds[2] && not isLaneBlocked(1, simulatorData.egoCar, simulatorData.otherCars))
+        else if (m_targetLaneD == D_RIGHT_LANE && laneSpeeds[1] - LANE_CHANGE_COST > laneSpeeds[2] && not isLaneBlocked(D_MIDDLE_LANE, simulatorData.egoCar, simulatorData.otherCars))
         {
             spdlog::info("[planPath] Changing to middle lane.");
             m_targetLaneD = D_MIDDLE_LANE;
@@ -90,14 +90,14 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::planPath(const 
         }
         else if (m_targetLaneD == D_MIDDLE_LANE && (laneSpeeds[0] - LANE_CHANGE_COST > laneSpeeds[1] || laneSpeeds[2] - LANE_CHANGE_COST > laneSpeeds[1]))
         {
-            if (laneSpeeds[0] > laneSpeeds[2] && not isLaneBlocked(0, simulatorData.egoCar, simulatorData.otherCars))
+            if (laneSpeeds[0] > laneSpeeds[2] && not isLaneBlocked(D_LEFT_LANE, simulatorData.egoCar, simulatorData.otherCars))
             {
                 spdlog::info("[planPath] Changing to left lane.");
                 m_targetLaneD = D_LEFT_LANE;
                 m_targetLaneIndex = 0;
                 m_laneChangeDelay = LANE_CHANGE_PENALTY;
             }
-            else if (not isLaneBlocked(2, simulatorData.egoCar, simulatorData.otherCars))
+            else if (not isLaneBlocked(D_RIGHT_LANE, simulatorData.egoCar, simulatorData.otherCars))
             {
                 spdlog::info("[planPath] Changing to right lane.");
                 m_targetLaneD = D_RIGHT_LANE;
@@ -280,24 +280,23 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::genPathSpline(
     int i = 0;
     for (double t = NODE_TRAVERSAL_RATE_SECONDS; t < PATH_DURATION_SECONDS; t += NODE_TRAVERSAL_RATE_SECONDS, ++i)
     {
+        // TODO: can now slow down if other cars are in the way, but that often triggers max accel fault
+        // The last change made to the isLaneBlocked function.
+
         const double speedDiff = maxLaneSpeed - prevEndSpeed;
         const double speedChangeSign = speedDiff >= 0 ? 1.0 : -1.0;
 
         double newSpeed = prevEndSpeed + speedChangeSign * SPEED_INCREASE * i;
-        if (newSpeed > SPEED_LIMIT_METRES_PER_SECOND)
+
+        if (newSpeed > maxLaneSpeed)
         {
-            newSpeed = SPEED_LIMIT_METRES_PER_SECOND;
+            newSpeed = maxLaneSpeed;
         }
         else if (newSpeed < 0.0)
         {
             newSpeed = 0.0;
         }
 
-        // double newSpeed = prevEndSpeed + SPEED_INCREASE * i;
-        // if (newSpeed > SPEED_LIMIT_METRES_PER_SECOND)
-        // {
-        //     newSpeed = SPEED_LIMIT_METRES_PER_SECOND;
-        // }
         const double x = newSpeed * t;
 
         xCarPoints.push_back(x);
@@ -363,12 +362,12 @@ int PathPlanner::getCarBehind(const EgoCar& egoCar, const std::vector<OtherCar>&
     return carBehindIndex;
 }
 
-bool PathPlanner::isLaneBlocked(const int targetLaneIndex, const EgoCar& egoCar, const std::vector<OtherCar>& otherCars) const
+bool PathPlanner::isLaneBlocked(const double targetLaneD, const EgoCar& egoCar, const std::vector<OtherCar>& otherCars) const
 {
     for (const auto& otherCar : otherCars)
     {
         // TODO: address S wraparound
-        if (std::abs(otherCar.d - egoCar.d) < 1.0 && std::abs(otherCar.s - egoCar.s) <= LANE_CHANGE_CLEAR)
+        if (std::abs(otherCar.d - targetLaneD) < 1.0 && std::abs(otherCar.s - egoCar.s) <= LANE_CHANGE_CLEAR)
         {
             return true;
         }
