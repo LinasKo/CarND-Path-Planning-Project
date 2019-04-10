@@ -145,12 +145,11 @@ namespace path_planning
         int m_targetLaneIndex { 1 };  // TODO: should be merged with m_targetLaneIndex
         unsigned int m_laneChangeDelay { 5u };  // Prevent changing lanes for this many time steps
 
-        // Reach this target before accepring a new plan
-        double m_targetX = std::numeric_limits<double>::min();
-        double m_targetY = std::numeric_limits<double>::min();
-
         // History
         std::deque<double> m_historyEgoX, m_historyEgoY;
+
+        // Holds previous speeds, including previous starting speed
+        std::vector<double> m_prevSegmentSpeeds {{ 0.0 }};
     };
 }
 

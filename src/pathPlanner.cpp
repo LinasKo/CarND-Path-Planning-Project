@@ -40,7 +40,7 @@ static constexpr double MAX_VELOCITY_CHANGE = 3.0;  // Dampen velocity change pa
 static constexpr unsigned TRAJECTORY_HISTORY_LENGTH = 100u; // How many nodes from a trajectory to keep in history
 
 static constexpr double LANE_SPEED_FORWARD_SCAN_RANGE = SPEED_LIMIT_METRES_PER_SECOND * 3.0;  // How far ahead to look for another vehicle when determining lane speeds
-// static constexpr double LANE_SPEED_BACKWARD_SCAN_RANGE = SPEED_LIMIT_METRES_PER_SECOND * 0.25;  // How far behind to look for another vehicle when determining lane speeds
+static constexpr double HOW_FAR_TO_STAY_BEHIND = SPEED_LIMIT_METRES_PER_SECOND * 0.5;  // How far behind a slower vehicle to stay
 static constexpr double LANE_CHANGE_CLEAR = SPEED_LIMIT_METRES_PER_SECOND * 0.5;  // How far behind and ahead to look into other lanes to see if another vehicle is blocking a lane change
 
 static constexpr unsigned int LANE_CHANGE_PENALTY = 5u;  // How many ticks to prevent the vehicle from changing lanes after doing so, or when distance to desired lane is too great
@@ -114,7 +114,7 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::planPath(const 
     m_prevSentX = xyTrajectory.first;
     m_prevSentY = xyTrajectory.second;
 
-    spdlog::debug("[planPath] ------------------------------");
+    spdlog::trace("[planPath] ------------------------------");
 
     return xyTrajectory;
 }
@@ -163,9 +163,10 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::genPathSpline(
     spdlog::trace("Y:  {}\n", toString(prevPathY));
 
     // Set up spline keypoints
-    spdlog::debug("[genPathSpline] maxLaneSpeed = {}, startSpeed + MAX_ACCELERATION = {}", maxLaneSpeed, MPH_TO_METRES_PER_SECOND(egoCar.speed) + MAX_ACCELERATION);
-    const double maxSpeed = std::min(maxLaneSpeed, MPH_TO_METRES_PER_SECOND(egoCar.speed) + MAX_ACCELERATION);
-    // const double maxSpeed = maxLaneSpeed;
+    spdlog::trace("[genPathSpline] maxLaneSpeed = {}, startSpeed + MAX_ACCELERATION = {}", maxLaneSpeed, MPH_TO_METRES_PER_SECOND(egoCar.speed) + MAX_ACCELERATION);
+    // const double maxSpeed = std::min(maxLaneSpeed, MPH_TO_METRES_PER_SECOND(egoCar.speed) + MAX_ACCELERATION);
+    const double maxSpeed = maxLaneSpeed;
+    // const double maxSpeed = std::min(maxLaneSpeed, SPEED_LIMIT_METRES_PER_SECOND);
 
     // Just because spline needs > 2 points
     const double dDifference = m_targetLaneD - egoCar.d;
@@ -231,17 +232,6 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::genPathSpline(
     spdlog::trace("xPoints:  {}\n", toString(xPoints));
     spdlog::trace("yPoints:  {}\n", toString(yPoints));
 
-    // Initialise and target to reach if this is the first run or pick a new target if the old one is reached.
-    const double distToTarget = distance(egoCar.x, egoCar.y, m_targetX, m_targetY);
-    spdlog::debug("[genPathSpline] Ego car (x, y)=({}, {}). distToTarget={}",  egoCar.x, egoCar.y, distToTarget);
-    if (m_targetX == std::numeric_limits<double>::min() || m_targetY == std::numeric_limits<double>::min() ||
-        distToTarget < 5.0)
-    {
-        m_targetX = xPoints[xPoints.size() - 1];
-        m_targetY = yPoints[yPoints.size() - 1];
-        spdlog::info("[genPathSpline] Setting new target: ({}, {})",  m_targetX, m_targetY);
-    }
-
     std::vector<double> xCarPoints, yCarPoints;
     std::tie(xCarPoints, yCarPoints) = worldCoordToCarCoord(egoCar, xPoints, yPoints);
 
@@ -256,46 +246,50 @@ std::pair<std::vector<double>, std::vector<double>> PathPlanner::genPathSpline(
     }
     spl.set_points(xCarPoints, yCarPoints);
 
-    double xTargetCarPoint, yTargetCarPoint;
-    std::tie(xTargetCarPoint, yTargetCarPoint) = worldCoordToCarCoord(egoCar, m_targetX, m_targetY);
-
     xCarPoints.clear();
     yCarPoints.clear();
 
     // Make path from spline
 
     const auto numCommandsExecuted = m_prevSentX.size() - prevPathX.size();
+    const double prevEndSpeed = m_prevSegmentSpeeds[numCommandsExecuted];
 
     static constexpr double SPEED_INCREASE = 0.1;  // Manually tuned
-    static double prevSpeed { MPH_TO_METRES_PER_SECOND(egoCar.speed) };  // Will be 0.0, but just in case
-
-    const double prevEndSpeed = prevSpeed + SPEED_INCREASE * numCommandsExecuted;
+    // const double prevEndSpeed = prevSpeed + SPEED_INCREASE * numCommandsExecuted;
     spdlog::trace("[genPathSpline] car Speed={}, prev speed? = {}", MPH_TO_METRES_PER_SECOND(egoCar.speed), prevEndSpeed);  // TODO: this can be used to plot charts of egoCar.speed and actual speed discrepancies
     // prevSpeed = MPH_TO_METRES_PER_SECOND(egoCar.speed);
-    prevSpeed = prevEndSpeed;
+    // prevSpeed = prevEndSpeed;
 
     // So, the returned car speed is bull***t. Sigh. I keep getting it as a steadily increasing number and then suddenly it goes down to some low number, before picking up again.
     // Better cache the speed I'm setting. And I hope I don't forget to mention this in the writeup.
 
+    // const double speedDiff = maxLaneSpeed - prevEndSpeed;
+    // const double absSpeedDiff = std::abs(speedDiff);
+    // const double speedChangeSign = speedDiff >= 0 ? 1.0 : -1.0;
+    // spdlog::debug("[genPathSpline]  maxLaneSpeed={}, prevEndSpeed={}, speedDiff={}, speedChangeSign={}", maxLaneSpeed, prevEndSpeed, speedDiff, speedChangeSign);
+
     int i = 0;
+    m_prevSegmentSpeeds.clear();
+    double prevSpeed = prevEndSpeed;
     for (double t = NODE_TRAVERSAL_RATE_SECONDS; t < PATH_DURATION_SECONDS; t += NODE_TRAVERSAL_RATE_SECONDS, ++i)
     {
-        // TODO: can now slow down if other cars are in the way, but that often triggers max accel fault
-        // The last change made to the isLaneBlocked function.
-
-        const double speedDiff = maxLaneSpeed - prevEndSpeed;
+        const double speedDiff = maxLaneSpeed - prevSpeed;
+        const double absSpeedDiff = std::abs(speedDiff);
         const double speedChangeSign = speedDiff >= 0 ? 1.0 : -1.0;
+        spdlog::trace("[genPathSpline]  maxLaneSpeed={}, prevSpeed={}, speedDiff={}, speedChangeSign={}", maxLaneSpeed, prevEndSpeed, speedDiff, speedChangeSign);
 
-        double newSpeed = prevEndSpeed + speedChangeSign * SPEED_INCREASE * i;
+        double newSpeed = prevSpeed + speedChangeSign * SPEED_INCREASE;
 
-        if (newSpeed > maxLaneSpeed)
+        if (newSpeed > SPEED_LIMIT_METRES_PER_SECOND)
         {
-            newSpeed = maxLaneSpeed;
+            newSpeed = SPEED_LIMIT_METRES_PER_SECOND;
         }
         else if (newSpeed < 0.0)
         {
             newSpeed = 0.0;
         }
+        prevSpeed = newSpeed;
+        m_prevSegmentSpeeds.push_back(prevSpeed);  // TODO: note that this solves both slowing down to other cars and the initial random jerk
 
         const double x = newSpeed * t;
 
@@ -384,25 +378,15 @@ std::array<double, 3> PathPlanner::getLaneSpeeds(EgoCar egoCar, const std::vecto
     {
         egoCar.d = lanes[i];
         int carAheadIndex = getCarAhead(egoCar, otherCars);
-        int carBehindIndex = getCarBehind(egoCar, otherCars);
         spdlog::trace("[getLaneSpeeds] Car ahead: {}", carAheadIndex);
 
-        double carAheadSpeed = SPEED_LIMIT_METRES_PER_SECOND;
-        double carBehindSpeed = SPEED_LIMIT_METRES_PER_SECOND;
+        speeds[i] = SPEED_LIMIT_METRES_PER_SECOND;
 
         if (carAheadIndex != -1 && otherCars[carAheadIndex].s - egoCar.s <= LANE_SPEED_FORWARD_SCAN_RANGE)
         {
             const auto& carAhead = otherCars[carAheadIndex];
-            carAheadSpeed = std::sqrt(carAhead.dx * carAhead.dx + carAhead.dy * carAhead.dy);
+            speeds[i] = std::sqrt(carAhead.dx * carAhead.dx + carAhead.dy * carAhead.dy);
         }
-        // if (carBehindIndex != -1 && egoCar.s - otherCars[carBehindIndex].s <= LANE_SPEED_BACKWARD_SCAN_RANGE)
-        // {
-        //     // TODO: simply prevent lane change?
-        //     const auto& carBehind = otherCars[carBehindIndex];
-        //     carBehindSpeed = std::sqrt(carBehind.dx * carBehind.dx + carBehind.dy * carBehind.dy);
-        // }
-
-        speeds[i] = std::min(carAheadSpeed, carBehindSpeed);
     }
 
     return speeds;
