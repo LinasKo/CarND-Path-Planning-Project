@@ -5,28 +5,15 @@
 #include <deque>
 #include <vector>
 
+#include "spline/spline.h"
+
 #include "commonDatatypes.h"
 #include "simulatorCommunication.h"
 
 
+
 namespace
 {
-    struct Kinematics
-    {
-        Kinematics() = default;
-        Kinematics(double velocity0, double acceleration0, double velocity1, double acceleration1) :
-            velocity0(velocity0),
-            acceleration0(acceleration0),
-            velocity1(velocity1),
-            acceleration1(acceleration1)
-        {};
-
-        double velocity0 { 0.0 };
-        double acceleration0 { 0.0 };
-        double velocity1 { 0.0 };
-        double acceleration1 { 0.0 };
-    };
-
     static constexpr double D_LEFT_LANE = 2.0;
     static constexpr double D_MIDDLE_LANE = 6.0;
     static constexpr double D_RIGHT_LANE = 10.0;
@@ -47,38 +34,21 @@ namespace path_planning
         void updateHistory(const SimulatorResponseData& simulatorData);
 
         /*
-         * Generate a XY trajectory for a path, covering both straight-line movements, and lane changing activities
-         */
-        std::pair<std::vector<double>, std::vector<double>> genPath(
-            const EgoCar& egoCar, const Kinematics& xyKinematics, const double maxLaneSpeed, const std::vector<OtherCar>& otherCars);
-
-        /*
-         * Generate a XY trajectory for a path, covering both straight-line movements, and lane changing activities
-         */
-        std::pair<std::vector<double>, std::vector<double>> genPathWithPast(
-            const EgoCar& egoCar, const Kinematics& xyKinematics, const std::vector<double>& prevPathX, const std::vector<double>& prevPathY,
-            const double maxLaneSpeed, const std::vector<OtherCar>& otherCars, const unsigned pastElementCount);
-
-        /*
          * Generate XY trajectory as a spline
          */
         std::pair<std::vector<double>, std::vector<double>> genPathSpline(
-            const EgoCar& egoCars, const double maxLaneSpeed, const std::vector<double>& prevPathX, const std::vector<double>& prevPathY, const unsigned keepPrevious);
+            const EgoCar& egoCars, const double maxLaneSpeed, const std::vector<double>& prevPathX, const std::vector<double>& prevPathY);
 
         /*
-         * Compute S and D velocity and acceleration of the vehicle
+         * Generate an xy path from the spline
          */
-        Kinematics computeSdKinematics();
+        std::pair<std::vector<double>, std::vector<double>> splineToPath(
+            const tk::spline& spl, const EgoCar& egoCar, const double maxLaneSpeed, const size_t numCommandsExecuted);
 
         /*
-         * Compute X and Y velocity and acceleration of the vehicle.
+         * Check if a lane change needs to be perfromed and change target lane if so
          */
-        Kinematics computeXyKinematics();
-
-        /*
-         * Compute X and Y velocity and acceleration of the vehicle, based on the next 3 unexecuted path steps, from path, returned by the simulator.
-         */
-        Kinematics computeXyKinematicsHist(std::vector<double> prevPathX, std::vector<double> prevPathY, const unsigned pastElementCount);
+        void scheduleLaneChange(const EgoCar& egoCar, const std::array<double, 3>& laneSpeeds, const std::vector<OtherCar>& otherCars);
 
         /*
         * Returns the index of vehicle in front and -1 otherwise.
@@ -108,18 +78,6 @@ namespace path_planning
         std::vector<OtherCar> predictCars(const std::vector<OtherCar>& otherCars, double deltaTime);
 
         /*
-        * Generate parameters for a quintic polynomial equation,
-        * representing a change in a value with minimum jerk minimizing changes in a variable based on start and end conditions
-        */
-        static std::array<double, 6> polynomialTrajectoryParameters(
-            double totalTime, double startPos, double startSpeed, double startAcc, double endPos, double endSpeed, double endAcc);
-
-        /*
-        * Fit a polynomial curve of given parameters with increments of time, generating nodes along a path
-        */
-        static std::vector<double> generateTrajectoryFromParams(double totalTime, double timeIncrement, const std::array<double, 6>& polyParams);
-
-        /*
         * Convert XY pose in map coordinates to car coordinates
         */
         static std::pair<double, double> worldCoordToCarCoord(const EgoCar& egoCar, double xWorld, double yWorld);
@@ -142,8 +100,8 @@ namespace path_planning
         const std::vector<Waypoint> m_waypoints;
         std::vector<double> m_prevSentX, m_prevSentY;
         double m_targetLaneD { D_MIDDLE_LANE };
-        int m_targetLaneIndex { 1 };  // TODO: should be merged with m_targetLaneIndex
-        unsigned int m_laneChangeDelay { 5u };  // Prevent changing lanes for this many time steps
+        int m_targetLaneIndex { 1 };  // TODO: should be merged with m_targetLaneIndex, if I ever come back to the project
+        unsigned int m_laneChangeDelay { 5u };  // Prevent changing lanes initially this many timesteps
 
         // History
         std::deque<double> m_historyEgoX, m_historyEgoY;
